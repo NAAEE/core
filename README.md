@@ -116,7 +116,7 @@ Install the <a target="_blank" href="http://www.microsoft.com/downloads/details.
 For laptops viewing localhost with ASP.NET 2.0, IIS also requires running:<br>
 C:\WINDOWS\Microsoft.NET\Framework\<version>\aspnet_regiis -i<br><br>
 
-<div class="projecttime"><strong>Time:</strong> 2-4 hrs depending on updates needed</div><br>
+<div class="projecttime" style="display:none"><strong>Time:</strong> 2-4 hrs depending on updates needed</div><br>
 -->
 
 
@@ -152,14 +152,14 @@ Create logins<br>
 Setup Network Connectivity and update Firewall settings. If the website and server will reside on the same server,
 this step won't be needed.<br>
 
-<div class="projecttime"><strong>Time:</strong>&nbsp;10-40 hrs</div>
+<div class="projecttime" style="display:none"><strong>Time:</strong>&nbsp;10-40 hrs</div>
 
 
 ## Add Web.Config file
 
 <a href='about/setup/File.aspx'>Generate Web.config File</a> and place in root folder.<br>
 
-<div class="projecttime"><strong>Time:</strong>&nbsp;4-8 hrs Setup/Testing/Troubleshooting</div>
+<div class="projecttime" style="display:none"><strong>Time:</strong>&nbsp;4-8 hrs Setup/Testing/Troubleshooting</div>
    
 
 
@@ -182,7 +182,7 @@ net.tcp, net.pipe, net.msmq, msmq.formatname
 	Extension: .kmz  
 	MIME type: application/vnd.google-earth.kmz  
 
-<div class="projecttime"><strong>Time:</strong>&nbsp;2-4 hrs</div>
+<div class="projecttime" style="display:none"><strong>Time:</strong>&nbsp;2-4 hrs</div>
 
 
 
@@ -196,7 +196,7 @@ Turn on the SMTP Service and set to Automatic Startup.<br>
 In C:\inetpub\maillroot, give the Network Service account full permissions.  
 This should be the same user account that the IIS Application Pools runs under.  
 
-<div class="projecttime"><strong>Time:</strong>&nbsp; 1-2 hrs</div>
+<div class="projecttime" style="display:none"><strong>Time:</strong>&nbsp; 1-2 hrs</div>  
 
     
 <h2>Directory Permission Setting</strong></h2>
@@ -228,7 +228,7 @@ Click Add to enter the Network Service username if not already present.
 Give it Full Control. Click Advanced. Keep the first box checked and also check
 the second "Replace permission entries on all child objects..."  
     
-<div class="projecttime"><strong>Time:</strong>&nbsp;2-3 hrs</div>
+<div class="projecttime" style="display:none"><strong>Time:</strong>&nbsp;2-3 hrs</div>
 <br><br>
 
 <style>
