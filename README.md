@@ -25,7 +25,7 @@ With new US EPA tools for Input-Output modeling developed at [Model.Earth](https
 
 #### Deployment Updates
 
-2020 - Streamlining Server Migration.  
+2020 - Streamlining server migration.  
 2019 - Updates for deployment from Github. 
 
 #### Free HTTPS Certs
@@ -108,7 +108,6 @@ OLD NOTE (We're switching to .NET 4.8, use link above)
 If not already installed, install the <a target="_blank" href="http://www.microsoft.com/en-us/download/details.aspx?id=17718">.NET Framework 4.0 (Standalone Installer)</a> or the <a target="_blank" href="http://www.microsoft.com/en-us/download/details.aspx?id=17851">.NET Framework 4.0 (Web Installer)</a>.  
 -->  
 The Web Installer is ease to use and ensures that any prerequisites are installed before installing the framework.
-
 <!-- XP
    
 Install the <a target="_blank" href="http://www.microsoft.com/downloads/details.aspx?familyid=0856eacb-4362-4b0d-8edd-aab15c5e04f5&displaylang=en">
@@ -117,7 +116,7 @@ Install the <a target="_blank" href="http://www.microsoft.com/downloads/details.
 For laptops viewing localhost with ASP.NET 2.0, IIS also requires running:<br>
 C:\WINDOWS\Microsoft.NET\Framework\<version>\aspnet_regiis -i<br><br>
 
-<strong>Time:</strong> 2-4 hrs depending on updates needed<br>
+<div class="projecttime"><strong>Time:</strong> 2-4 hrs depending on updates needed</div><br>
 -->
 
 
@@ -153,14 +152,14 @@ Create logins<br>
 Setup Network Connectivity and update Firewall settings. If the website and server will reside on the same server,
 this step won't be needed.<br>
 
-<strong>Time:</strong>&nbsp;20-40 hrs<br>
+<div class="projecttime"><strong>Time:</strong>&nbsp;10-40 hrs</div>
 
 
 ## Add Web.Config file
 
 <a href='about/setup/File.aspx'>Generate Web.config File</a> and place in root folder.<br>
 
-<strong>Time:</strong>&nbsp;4-8 hrs Setup/Testing/Troubleshooting<br>
+<div class="projecttime"><strong>Time:</strong>&nbsp;4-8 hrs Setup/Testing/Troubleshooting</div>
    
 
 
@@ -183,7 +182,7 @@ net.tcp, net.pipe, net.msmq, msmq.formatname
 	Extension: .kmz  
 	MIME type: application/vnd.google-earth.kmz  
 
-<strong>Time:</strong>&nbsp;2-4 hrs
+<div class="projecttime"><strong>Time:</strong>&nbsp;2-4 hrs</div>
 
 
 
@@ -195,9 +194,9 @@ net.tcp, net.pipe, net.msmq, msmq.formatname
 Setup email to allow website to send emails.<br>
 Turn on the SMTP Service and set to Automatic Startup.<br>
 In C:\inetpub\maillroot, give the Network Service account full permissions.  
-This should be the same user account that the IIS Application Pools runs under.
+This should be the same user account that the IIS Application Pools runs under.  
 
-<strong>Time:</strong>&nbsp; 1-2 hrs  
+<div class="projecttime"><strong>Time:</strong>&nbsp; 1-2 hrs</div>
 
     
 <h2>Directory Permission Setting</strong></h2>
@@ -229,10 +228,15 @@ Click Add to enter the Network Service username if not already present.
 Give it Full Control. Click Advanced. Keep the first box checked and also check
 the second "Replace permission entries on all child objects..."  
     
-<strong>Time:</strong>&nbsp;2-3 hrs<br>
-<br>
+<div class="projecttime"><strong>Time:</strong>&nbsp;2-3 hrs</div>
+<br><br>
 
-
-
-<br>
-
+<style>
+	.projecttime {
+		display:none;
+		margin-bottom:15px;
+	}
+	h2 {
+	    margin-top: 40px;
+	}
+</style>
