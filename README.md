@@ -7,7 +7,7 @@
 </div>
 
 
-#### EE Website Tools
+#### Environmental Education Website Tools
 
 # Resources and Event Calendars
 
@@ -71,8 +71,9 @@ Instruction below are for: Vista - Windows 7/10 / Windows Server 2008/2016 and f
 Commented out: XP - Windows XP / Windows Server 2005  
 -->
 
-## Install IIS
+## Install and Configure IIS
 
+Launch Internet Information Services(IIS)
 You can create one IIS entry for multiple sites that use the same IP addreess.  
 
 <!--
@@ -83,29 +84,30 @@ Make sure a primary website is viewable in a browser while on the machine itself
 
 
 <h2>Application Pool Setup</h2>
-Edit or create an Application Pool for each website or group of websites.<br>
-Application Pool Settings (Advanced):<br>
+In IIS, edit or create an Application Pool for each website or group of websites.<br>
 
 <ul>
 <li>Set the .NET Framework Version to ASP.NET 4.0.</li>
-<li>For 64-Bit operating systems - may need to set "Enable 32-Bit Applications" to True 
+
+<li>Assign the App Pool in IIS under Basic Settings</li>
+</ul>
+
+Didn't do the following yet on new server:
+<ul>
+<li>For 64-Bit operating systems - may need to set "Enable 32-Bit Applications" to True  
 -- For COM dlls used by the asp pages.</li>
 <li>Set up each Application Pool to run under the Network Service Identity rather than the default ApplicationPoolIdentity Identity. This allows write permissions to be set for common folders that are used by all websites, such as for mail or upload folders, to be set up using one identity. (Else the mail pickup folder will display error: Access to the path is denied.)</li>
 </ul>
 
 
-<strong>Time: </strong>&nbsp;1-4 hrs for 10 sites<br>
-
-
 <h2>Install and Configure .NET, Run Windows Update</h2>
 
 Get the latest updates related to the .NET Framework - 
-<a href="https://dotnet.microsoft.com/download/dotnet-framework/">Download .NET Framework</a> using the Web Installer
-<br>
-
+<a href="https://dotnet.microsoft.com/download/dotnet-framework/">Download .NET Framework</a> using the Web Installer.<!--
 OLD NOTE (We're switching to .NET 4.8, use link above)  
 If not already installed, install the <a target="_blank" href="http://www.microsoft.com/en-us/download/details.aspx?id=17718">.NET Framework 4.0 (Standalone Installer)</a> or the <a target="_blank" href="http://www.microsoft.com/en-us/download/details.aspx?id=17851">.NET Framework 4.0 (Web Installer)</a>.  
-The Web Installer is easier to use and ensures that any prerequisites are installed before installing the framework.
+-->  
+The Web Installer is ease to use and ensures that any prerequisites are installed before installing the framework.
 
 <!-- XP
    
@@ -118,7 +120,6 @@ C:\WINDOWS\Microsoft.NET\Framework\<version>\aspnet_regiis -i<br><br>
 <strong>Time:</strong> 2-4 hrs depending on updates needed<br>
 -->
 
-<strong>Time:</strong>&nbsp;2-5 hrs depending on configuration required
 
 <a name="database"></a>
 
