@@ -1,0 +1,4542 @@
+using System;
+using System.Data;
+using System.Configuration;
+using System.Collections;
+using System.Collections.Generic;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Web;
+using System.Web.Configuration;
+using System.Web.Security;
+using System.Web.UI;
+using System.Web.UI.WebControls;
+using System.Web.UI.WebControls.WebParts;
+using System.Web.UI.HtmlControls;
+using System.Drawing;
+using System.Data.SqlClient;
+using ManagementSuite.Web.UI;
+using HelperFunctions.Mail;
+using HelperFunctions.Util;
+using HelperFunctions.Security;
+using ManagementSuite.Data.DataObjects;
+using ManagementSuite.Web.UI.Controls;
+
+public partial class Member_Form : UIPage
+{
+    bool newuser = false;
+    protected int groupBaseTypeID;
+    public int MailingAddressID;
+    protected System.Web.UI.WebControls.Panel NameAndEmailPanel;
+    protected bool displayContact = false;
+    protected bool contactUser = false;
+    protected bool displayBiography = false;
+    protected bool displayInterests = false;
+    protected string FulfillmentConnString = string.Empty;
+    protected System.Web.UI.WebControls.TextBox TitleDD;
+    protected int NumPhoneFields = 4;
+    protected bool searchAllSites = false;
+    protected bool emailFound = false;
+    protected int typeID = 60000;	// Used by image upload window to initiate new user Item record.
+    protected bool newItemRecalledFromGuid = false;
+    protected string FullName;
+    protected int logonCount = 0;
+    protected int orgID = 0;
+    protected int copyLogonFromSiteID = 0;
+    protected string url = "";
+    protected bool testing = false;
+    protected int emailPreference = 6; // Monthly
+    protected int postalPreference = 1; // Very infrequent
+    protected bool addOrganization = false;
+    protected ReCaptchaV2 ReCaptcha = null;
+    protected int MaxRevocationCommentLength = 1000;
+    protected int MaxStaffNotesLength = 5000;
+   
+    protected void Page_Load(object sender, EventArgs e)
+    {
+
+    	//string message2 = "Database migration in progress.";
+        //Response.Redirect(GetUrl("/core/member/message.aspx?message=" + Server.UrlEncode(message2)));
+
+        // 11/20/2006 - Removed ValidateRequest="false" from the Page directive in Join.aspx
+        // in an attempt to fix "Validation of viewstate MAC failed" error.
+
+        //if (UserAccess >= 9) testing = true;
+
+        RedirectIfEditBlocked();
+
+        IncludeJQuery = true;
+
+        if (Live)
+        {
+            if (!Host.StartsWith("https")) {
+                if (IsSiteGroup("GeorgiaDNR"))
+                {
+                    if (Version == 2)
+                    {
+                        Response.Redirect("https://explore.gastateparks.org" + RelativeUrl); // redirect to secure domain
+                    }
+                    else
+                    {
+                        Response.Redirect("https://gastateparks.org" + RelativeUrl); // redirect to secure domain
+                    }
+                }
+                if (IContains(Host, "gpna"))
+                {
+                    Response.Redirect("https://gpna.org" + RelativeUrl); // redirect to secure domain
+                }
+            }
+        }
+        else
+        {
+        }
+
+		PopulateUrl();
+        //if (GetRequestString("lookup").Length > 0)
+        //{
+        //    Template.Url ="/core/elements/templates/yellow.htm";
+        //}
+
+        // Set PartnerID
+        if (GetRequestInt("orgid") > 0) PartnerID = GetRequestInt("orgid");
+        if (PartnerID <= 0) PartnerID = GetRequestInt("listid"); // Phasing out. Use "p" for PartnerID
+
+        if (PartnerID > 0)
+        {
+            orgID = PartnerID; // To do: Entire page will be updated to use PartnerID instead of orgID.
+            
+            // This prevents another itemID from being entered in "s" string to trick ItemAccess.
+            ItemID = PartnerID;
+        }
+        else
+        {
+            // Wait to activate after userID is switched to a short hex string.
+            // Currently this will overwrite uid for Contact Us form title, which is passed in using the s value.
+            //PageItemID = 0;
+        }
+		//if (UserAccess >= 9 || (IContains(ConnectionName, "georgia") && UserAccess >= 6))
+
+        if (UserAccess >= 9 || ((SiteGroup.Length > 0 || ConnectionName.ToLower() == "ee") && UserAccess >= 6))
+		{
+			AllSitesPanel.Visible = true;
+		}
+		if (IsSite("GeorgiaAbroad") && !IsPostBack)
+		{
+			AllSitesCB.Checked = true;
+		}
+        if (IsSiteGroup("GeorgiaDNR") && !IsPostBack)
+        {
+            LastSSNPanel.Visible = true;
+        }
+        if (IsSite("eeaga") && UserAccess >= 8 && !IsPostBack)
+        {
+            AllSitesPanel.Visible = true;
+            AllSitesCB.Checked = true;
+        }
+        if (ConnectionName.ToLower() == "ee" || IsSiteType("ee") || UserAccess >= 9)
+        {
+            MailingAddressEdit.DisplayCountyDropDown = true;
+        }
+		if (AllSitesCB.Checked)
+		{
+			searchAllSites = true;
+		}
+		if (IsSite("GeorgiaFilm"))
+		{
+			SendWelcomeCB.Checked = false; // Do not notifiy contacts automatically.
+		}
+
+        string display = GetRequestString("display");
+		if (IsSiteType("Outdoor") && !IsSite("eenc") && display != "contact")
+		{
+			HowToReceivePanel.Visible = true;
+		}
+		if (IsSite("Sam") && UserAccess >= 4)
+		{
+			InvoiceSearchPanel.Visible = true;
+		}
+		if (UserAccess >= 4)
+		{
+			GroupSearchPanel.Visible = true;
+		}
+
+        if (!IsPostBack)
+        {
+            uid = GetRequestInt("uid");
+            if (!IsNull(LastUrl))
+            {
+                // A postback sets the HTTP_REFERER to the current page. If adding an individual, there are two
+                // postbacks: the initial search and then the final submit (providing validations pass). If no other
+                // url is passed in to redirect to, the last url is set to this page.
+                // So, save the LastUrl to the viewstate on the initial load to preserve that value through the postbacks.
+                ViewState["LastUrl"] = LastUrl;
+            }
+
+            if (IsNull(uid)) uid = GetRequestInt("userid"); // Avoid passing in "userid", use "uid" in URL instead.
+            if (IsNull(uid)) uid = GetInt(RouteData.Values["UID"]); // Try to get the value from the route parameter.
+            if (uid < 0 && UserID > 0)
+            {
+                uid = UserID; // The current user.
+            }
+            if (uid <= 0 && (UserAccess >= 4 || PartnerAccess >= 6) && PartnerID > 0)
+            {
+                QuickAddLabel.Text = "<a href='" + GetShortLink("/core/mail/add.aspx?p=" + PartnerID, 0) + "'>Quick Add</a> - Paste multiple email addresses to associate new and existing users to this group.<br />";
+                if (UserAccess >= 10) {
+                	QuickAddLabel.Text += "<span style='white-space:nowrap'><a href='" + GetShortLink("/core/member/group-edit.aspx?listid=" + ItemID, 0) + "'>Enter Names and Emails</a> - Enter using rows for name, email and birthdate. (Admin only, test saving)</span><br />";
+                }
+                QuickAddLabel.Text += "<br />";
+            }
+
+            // Set aria-labelledby attribute for server labels
+            SubjectTB.Attributes["aria-labelledby"] = SubjectLabel.ClientID;
+            MessageBodyTB.Attributes["aria-labelledby"] = MessageBodyLabel.ClientID;
+            EmailTB1.Attributes["aria-labelledby"] = EmailAddressLabel1.ClientID;
+            EmailTB2.Attributes["aria-labelledby"] = EmailAddressLabel2.ClientID;
+            EmailTB3.Attributes["aria-labelledby"] = EmailAddressLabel3.ClientID;
+            CompanyTB.Attributes["aria-labelledby"] = OrgLabel.ClientID;
+            SiteAccessDD.Attributes["aria-labelledby"] = SiteAccessLabel.ClientID;
+            GroupAccessDD.Attributes["aria-labelledby"] = GroupAccessLabel.ClientID;
+            RelationTypeDD.Attributes["aria-labelledby"] = RelationTypeLabel.ClientID;
+        }
+        else
+        {
+            QuickAddLabel.Text = "";
+        }
+
+		if (!IsPostBack)
+		{
+            if (uid == 0 && !UserState.Authenticated) // uid is 0 when submitting form to create a new account when not logged in yet.
+            {
+                Session["message"] = "Please logon before adding another user.";
+                Response.Redirect(GetUrl("/net/member/signin.aspx?gologon=" + Server.UrlEncode(RelativeUrl)));
+            }
+            if (IsSiteType("ee"))
+            {
+                OrgLabel.Text = "Employer"; // Requested for certification application.
+            }
+			LoadRelation(orgID,uid);
+		}
+		
+		if(display == "contact")
+		{
+			displayContact = true;
+		}
+		else if(display == "bio")
+		{
+			displayBiography = true;
+		}
+
+        if (display != "contact")
+        {
+            if ((UserAccess < 6 && PartnerAccess < 6) && UserID != uid && uid > 0)
+            {
+                string message = "You do not have the access level required to edit information for other individuals.";
+                if (UserID <= 0)
+                {
+                    message = "Please log in to make updates.";
+                    Response.Redirect(GetUrl("/net/member/signin.aspx?message=" + Server.UrlEncode(message) + "&gologon=" + Server.UrlEncode(RelativeUrl)));
+                }
+                Response.Redirect(GetUrl("/core/member/message.aspx?message=" + Server.UrlEncode(message)));
+            }
+        }
+
+		if(GetRequestString("groups") == "true")
+		{
+			displayInterests = true;
+		}
+		
+		if (UserAccess >= 9)
+		{
+			NotesPanel.Visible = true;
+		}
+		if(displayContact || uid == 0)
+		{
+			UserNamePasswordPanel.Visible = false;
+		}
+		
+		if (UserAccess == 0)
+		{
+			TitleLabel.Text = "Create an account";
+		}
+
+		if(uid == 0)
+		{
+			// Old BUGBUG - Problem with ItemAccess - Should not need to set both, but when editor has lower level in a group, their siteAccess was reduced.
+			// Could have something to do with PageItemID being set above.
+            // Changed ItemAccess to PartnerAccess in conversion to MS
+			if (PartnerAccess >= 4 || UserAccess >= 4)
+			{
+				LogonPanel.Visible = true;
+			}
+			Page.Title = SiteTitle + " - Add Individual";
+		
+			if (GetRequestString("gosearch").Length > 0 || GetRequestString("lookup").Length > 0) 
+			{
+				TitleLabel.Text = "Find Individual";
+				Page.Title = SiteTitle + " - Find Individual";
+                if (IsMode("m"))
+                {
+                    TitleLabel.Text = "Find Contacts";
+                    Page.Title = SiteTitle + " - Find Contacts";
+                }
+			}
+		} 
+		else if (displayContact)
+		{
+			Page.Title = SiteTitle + " - Contact";
+		} 
+		else 
+		{
+			Page.Title = SiteTitle + " - Individual";
+		} 
+		
+		if (!IsPostBack) 
+		{
+			LoadListDetails();
+
+			SearchPanel.Visible = false;
+			SearchResultsPanel.Visible = false;
+			UserInfoPanel.Visible = false;
+
+			NamePrefixDD.Items.Add(new ListItem("Select...", ""));
+			NamePrefixDD.Items.Add(new ListItem("Mr.", "Mr."));
+			NamePrefixDD.Items.Add(new ListItem("Ms.", "Ms."));
+			NamePrefixDD.Items.Add(new ListItem("Mrs.", "Mrs."));
+			NamePrefixDD.Items.Add(new ListItem("Miss", "Miss"));
+			NamePrefixDD.Items.Add(new ListItem("Dr.", "Dr."));
+			NamePrefixDD.Items.Add(new ListItem("Hon.", "Hon."));
+			NamePrefixDD.Items.Add(new ListItem("Rev.", "Rev."));
+
+			NameSuffixDD.Items.Add(new ListItem("Select...", ""));
+			NameSuffixDD.Items.Add(new ListItem("Jr.", "Jr."));
+			NameSuffixDD.Items.Add(new ListItem("Sr.", "Sr."));
+			NameSuffixDD.Items.Add(new ListItem("I", "I"));
+			NameSuffixDD.Items.Add(new ListItem("II", "II"));
+			NameSuffixDD.Items.Add(new ListItem("III", "III"));
+			NameSuffixDD.Items.Add(new ListItem("IV", "IV"));
+
+            if (GetRequestString("publiccontact") == "1")
+            {
+                PublicContactCB.Checked = true;
+            }
+			LoadPhoneTypes();
+
+			SelectedSiteID = SiteID;
+
+			// Load before LoadMemberRoles so groupBaseTypeID is available.
+			if(orgID > 0)
+			{
+                Item item = new Item();
+                item.es.Connection.Name = ConnectionName;
+                if (item.LoadByPrimaryKey(orgID))
+                {
+                    GroupTitleLabel.Text = item.Title.Replace("''", "'");
+                    GroupPanel.Visible = true;
+                    groupBaseTypeID = GetInt(item.BaseTypeID);
+                }
+                //item.Id = orgID;
+                //item.Load();
+                LoadRelationTypeDropDown();
+			}
+
+			// Load the drop down listboxes before loading any users.
+			LoadMemberRoles();
+            
+			LoadSiteAccess();
+			
+			if (UserAccess >= 4 && displayBiography == true)
+			{
+                // REMOVE - links to old process.
+				//PictureUploadPanel.Visible = true;
+			}
+
+            // This is true for all, no need to set here.
+            //if (IsSite("GeorgiaGolf"))
+            //{
+            //    // LoadUserInfo (called after this) will reset to false if this is an 
+            //    // existing user or an existing user is selected.
+            //    SendWelcomeCB.Checked = true;
+            //}
+			if(UserState.Authenticated)
+			{
+				// Fulfillment users are added at access level 4. Make sure the 
+				// user adding them is at that level at least. Prevents creating an
+				// account with elevated privileges.
+				if(IsSite("GeorgiaTourism") && orgID == 38121 && UserAccess < 4)
+				{
+					Session["Message"] = "Your access level does not include adding members to this group";
+					return;
+				}
+
+				if(orgID > 0 && (UserAccess >= 4 || PartnerAccess >= 5 || (IsSite("GeorgiaTourism") && orgID == 38121)))
+				{
+                    GroupFieldsPanel.Visible = true;
+					MemberRolePanel.Visible = true;
+					PublicContactCB.Visible = true;
+
+					if(IsSite("GeorgiaTourism"))
+					{
+						LoadDefaultSources();
+					}
+				}
+
+                if (orgID > 0)
+                {
+                    if (uid == UserID && !displayContact)
+                    {
+                        PublicContactCB.Visible = true; // allows a user to uncheck themselves.
+                    }
+                    if (uid <= 0)
+                    {
+                        if (GetInt(GroupAccessDD.SelectedValue) >= 6 && orgID != SiteID)
+                        {
+                            PublicContactCB.Checked = true;
+                        }
+                    }
+                }
+
+				if ((orgID > 0) && (orgID != 38121))
+				{
+					MemberRoleTitlePanel.Visible = true;
+				}
+				else
+				{
+					MemberRoleTitlePanel.Visible = false;
+				}
+
+				if (SiteID == orgID || UserAccess >= membershipDatesAccess)
+				{
+					if (SiteID == orgID) GroupAccessLabel.Text = "Site Group Access";
+					// Don't show SiteAccessDD when the SiteID is the orgID.
+					// MemberRolesDD handles site access in this case.
+                    if (UserAccess < membershipDatesAccess) // Might be an alternative.  Added to Security Patrol sould see Public Contact box, etc.
+                    {
+                        // LH commented out these 2 on 1/27/2009
+                        //MemberRolePanel.Visible = false; // Hidden until saving also updates Logon table row(s) for user.
+
+                        //PublicContactCB.Visible = false;
+                    }
+                    SiteAccessPanel.Visible = false;
+				
+					if (UserAccess >= 7)
+					{
+						MemberDatesPanel.Visible = true;
+					}
+				}
+
+				// If userid passed in and is same as current userid, add current user to group
+				// If userid passed in and is different from current userid, add other user to group
+				// No userid passed in, add current user to group
+
+		        if(uid == UserID || uid > 0)
+				{
+					UserInfoPanel.Visible = true;
+					
+					if(orgID > 0)
+					{
+						GroupPanel.Visible = true;
+					}
+
+					EmailPanel.Visible = false;
+					EmailEditPanel.Visible = true;
+
+					LoadUserInfo(uid);
+					
+					// Follows LoadUserInfo so SelectedUserSiteAccess is available
+					if(UserAccess >= 6 && UserAccess >= SelectedUserSiteAccess && SelectedUserSiteAccess > -1)
+					{ // Greater than -1 prevents access been granted to edit address for user without a logon record in the current website.
+						EmailEditPanel.Visible = true;
+						EmailPanel.Visible = false;
+					}
+					if((UserAccess <= 5 && uid != UserID && uid > 0 && UserID > 0))
+					{
+						EmailPanel.Visible = true;
+						EmailEditPanel.Visible = false;
+					}
+					if (UserID == uid)
+					{	//hide site access choices if we're own our own record.
+						SiteAccessPanel.Visible = false;
+					}
+                    if (ReCaptcha != null && UserAccess == 0)
+                    {
+                        CaptchaPanel.Visible = true;
+                    }
+
+                    if (UserAccess >= 6 && (IsSite("GeorgiaParks") || IsSite("GeorgiaVolunteers")))
+                    {
+                        VolunteerInfoPanel.Visible = true;
+                        RevocationCommentTB.MaxLength = MaxRevocationCommentLength;
+                        RevocationCommentTB.Attributes["data-maxlength"] = MaxRevocationCommentLength.ToString();
+                        VolunteerStaffNotesTB.MaxLength = MaxStaffNotesLength;
+                        VolunteerStaffNotesTB.Attributes["data-maxlength"] = MaxStaffNotesLength.ToString();
+                        LoadVolunteerStatus(uid);
+                    }
+				}
+				else
+				{ // ADDING NEW USER
+					SearchPanel.Visible = true;
+					SendWelcomeCB.Checked = true;
+				}
+
+                if (orgID > 0 && IsNull(MemberStartDateTB.Text))
+                {
+                    MemberStartDateTB.Text = DateTime.Now.ToString();
+                }
+            }
+			else
+			{
+				// Fulfillment users are added at access level 4. Make sure the 
+				// user adding them is at that level at least. Prevents creating an
+				// account with elevated privileges.
+				if(IsSite("GeorgiaTourism") && orgID == 38121)
+				{
+					Session["Message"] = "You must be logged in to add members to this group";
+					return;
+				}
+				SearchPanel.Visible = true;
+			}
+			if (uid != UserID)
+			{
+				EmailAddressLabel1.Text = "Primary Email Address"; // Overwrites use of "Your"
+			}
+            LoadMailPreferences(emailPreference, postalPreference);
+
+			if (!IsPostBack)
+			{
+				if (GetRequestString("simple").Length > 0) 
+				{
+					EmailEditPanel.Visible = false;
+					EmailPanel.Visible = false;
+				}
+			}
+
+			if(orgID > 0)
+			{
+				Item item = new Item();
+                item.es.Connection.Name = ConnectionName;
+
+                item.LoadByPrimaryKey(orgID);
+                //item.Id = orgID;
+                //item.Load();
+			}
+
+			if (displayContact)
+			{
+				UserInfoPanel.Visible = true;
+				SearchPanel.Visible = false;
+				EmailEditPanel.Visible = true;
+                if (UserAccess > 0)
+                {
+                    EmailEditExtraPanel.Visible = false; // Hide additional email textboxes for logged in users
+                }
+                if (ReCaptcha != null && UserAccess == 0)
+                {
+                    CaptchaPanel.Visible = true;
+                }
+			}
+
+			// Use aspNetEmail's regular express to ensure that the email
+			// address is valid.
+			//EmailMessage emTest = new EmailMessage();
+            //InvalidEmailValidator1.ValidationExpression = emTest.ValidateRegEx;
+            InvalidEmailValidator1.ValidationExpression = DSMailMessage.ValidationExpression;
+
+			EnableValidators();	// Call after setting UserInfoPanel visibility
+		}
+        
+		if(displayContact == true)
+		{
+			if(ItemID > 0 && ItemID != SiteID) // see if userid passed in
+			{
+                contactUser = true;
+				if(!IsPostBack)
+				{
+					string sql = "SELECT Title, Email FROM ContactInfo WHERE ItemID = " + ItemID;
+					SqlDataReader reader = ExecuteReader(sql);
+					if(reader.Read())
+					{
+						MainTitleLabel.Text = "Contact " + reader["Title"];
+						ContactUserEmail = reader["Email"].ToString();
+
+                        if (IsNull(ContactUserEmail))
+                        {
+                            MessagePage("The requested individual does not have an email address.");
+                        }
+
+						// These are set elsewhere and existing email is not overwritten.
+						//EmailEditPanel.Visible = false;
+						//EmailPanel.Visible = false;
+
+						SubjectLabel.Text = "Subject";
+						MessageBodyLabel.Text = "Message";
+					}
+					reader.Close();
+
+                    if (IsSite("Adams"))
+                    {
+                        AgentPanel.Visible = true;
+                    }
+				}
+			}
+			else
+			{
+				MainTitleLabel.Text = "Contact";
+				SubjectLabel.Text = "Subject / Type of Request";
+				MessageBodyLabel.Text = "Talk to Us";
+			}
+			MainTitlePanel.Visible = true;
+			NameLabel.Text = "Your Name";
+			MessageBodyPanel.Visible = true;
+			if (UserState.Authenticated)
+			{
+				// NumPhoneFields = 3; // Blank rows appear.
+				MailingAddressHidden();
+				NamePanel.Visible = false;
+				PhonePanel.Visible = false;
+				JobTitlePanel.Visible = false;
+				NotesPanel.Visible = false;
+			}
+			if (!IsPostBack)
+			{
+				RequestSelections();
+				RenderInterests();
+			}
+		}
+		if (IsSite("walker") && ItemID == 5316)
+        {
+            PreAppPanel.Visible = true;
+            // These labels may already exist with a different name:
+            SubjectLabel.Text = "Name of Proposed Project";
+            MessageBodyLabel.Text = "Describe your organization and project.<br />You may type or copy up to two pages of text.<br />Include your organization's website address.";
+            SubjectRequiredValidator.ErrorMessage = "Project Name is required";
+            MessageRequiredValidator.ErrorMessage = "Description is required";
+        }
+		if(!contactUser)
+		{
+			// Old BUGBUG - Had to duplicate this here because same code above was being overwritten.
+			// Edit this Georgia user to see example http://localhost/net/content/go.aspx?s=49741.0.4.3011
+			if(UserAccess >= 6 && UserAccess >= SelectedUserSiteAccess && SelectedUserSiteAccess > -1)
+			{ // Greater than -1 prevents access been granted to edit address for user without a logon record in the current website.
+				EmailEditPanel.Visible = true;
+				EmailPanel.Visible = false;
+			}
+		}
+		if (GroupTitleLabel.Text.Length == 0)
+		{
+			RenderTitleLabel();
+		}
+
+        if (orgID > 0)
+        {
+            GroupFieldsPanel.Visible = true;
+            if (PartnerAccess >= 4 || UserAccess >= 4)
+            {
+                MemberRolePanel.Visible = true;
+            }
+            MemberRoleTitlePanel.Visible = true;
+        }
+        else
+        {
+            GroupFieldsPanel.Visible = false;
+        }
+
+        // This still doesn't work.  Had to set GroupFieldsPanel.Visible = true everywhere.
+        // Infact, this cannot detect MemberRolePanel.Visible on postback.
+        //GroupFieldsPanel.Visible = true; // Surrounding panel must be visible for nested panels to register as visible.
+        //if (MemberRolePanel.Visible || MemberRoleTitlePanel.Visible || RelationTypePanel.Visible || SiteAccessPanel.Visible || SourcePanel.Visible || MemberDatesPanel.Visible)
+        //{
+        //    GroupFieldsPanel.Visible = true;
+        //}
+        //else
+        //{
+        //    GroupFieldsPanel.Visible = false;
+        //}
+	}
+    
+    protected override void OnInit(EventArgs e)
+    {
+        CreatePhoneControls();
+        LoadCaptcha();
+        base.OnInit(e);
+    }
+
+		private void MailingAddressHidden()
+		{
+			MailingAddressPanel.Visible = false;
+		}
+		private void LoadMemberRoles()
+		{
+			LoadMemberRoles(0);
+		}
+
+		private void LoadMemberRoles(int maxAccessOverride)
+		{
+
+			if (orgID <= 0) return;
+			
+			// Text is Role Title and value is member Access level
+
+			int maxAccess = 0;
+			if (IsSite("GeorgiaTourism") && orgID == 38121) 
+			{
+				GroupAccessDD.Items.Add(new ListItem("Operator","4"));
+				GroupAccessDD.Items.Add(new ListItem("Senior Operator","6"));
+				GroupAccessDD.Items.Add(new ListItem("Warehouse","5"));
+				GroupAccessDD.Items.Add(new ListItem("Reporting","7"));
+				GroupAccessDD.Items.Add(new ListItem("Administrator","8"));
+                if (PartnerAccess >= 5)
+                {
+                    GroupAccessDD.SelectedValue = "4";	//Default
+                }
+                else
+                {
+                    GroupAccessDD.SelectedValue = "1";
+                }
+			} 
+			else 
+			{
+				if(maxAccessOverride > 0)
+				{
+					maxAccess = maxAccessOverride;
+				}
+				else
+				{
+					if(UserAccess > 5)
+					{
+						maxAccess = UserAccess;
+					}
+					else
+					{
+						if(PartnerAccess < UserAccess)
+						{
+							maxAccess = UserAccess; // Up to 5
+						}
+                        else if ((PartnerAccess <= 5 && !IsSiteType("Outdoor")) || (PartnerAccess <= 4 && IsSiteType("Outdoor")))
+						{
+							maxAccess = PartnerAccess;
+						}
+                        else	// Partner Access > 5 (or 5+ for Outdoor sitetype)
+						{
+							maxAccess = 5;
+                            if (IsSiteType("Outdoor"))
+                            {
+                                maxAccess = 8;
+                            }
+						}
+					}
+				}
+
+                GroupAccessDD.Items.Clear();
+				GroupAccessDD.Items.Add(new ListItem("Guest (1)","1"));
+				if(maxAccess >= 2) GroupAccessDD.Items.Add(new ListItem("Member (2)","2"));
+				if(maxAccess >= 3) GroupAccessDD.Items.Add(new ListItem("Member+ (3)","3"));
+				if(maxAccess >= 4) GroupAccessDD.Items.Add(new ListItem("Assistant (4)","4"));
+				if(maxAccess >= 5) GroupAccessDD.Items.Add(new ListItem("Contributor (5)","5"));
+				if(maxAccess >= 6) GroupAccessDD.Items.Add(new ListItem("Moderator (6)","6"));
+				if(maxAccess >= 7) GroupAccessDD.Items.Add(new ListItem("Manager (7)","7"));
+				if(maxAccess >= 8) GroupAccessDD.Items.Add(new ListItem("Administrator (8)","8"));
+				if (UserAccess >= 9)
+				{
+					GroupAccessDD.Items.Add(new ListItem("SysAdmin (9)","9"));
+				}
+                int defaultGroupAccess = 1;
+                if (PartnerAccess == 4)
+                {
+                    defaultGroupAccess = 4;
+                } else if (PartnerAccess >= 5)
+                {
+                    defaultGroupAccess = 5;
+                }
+                if (IsSiteType("Outdoor"))
+                {
+                    if (PartnerAccess >= 5)
+                    {
+                        defaultGroupAccess = 8;
+                    }
+                    else
+                    {
+                        defaultGroupAccess = (UserAccess > PartnerAccess ? UserAccess : PartnerAccess);
+                    }
+                }
+                if (GetRequestInt("relationAccess") >= 1)
+                {
+                    defaultGroupAccess = GetRequestInt("relationAccess");
+                }
+                if (defaultGroupAccess >= 0 && maxAccess >= defaultGroupAccess)
+				{
+                    if (GroupAccessDD.Items.FindByValue(GetString(defaultGroupAccess)) == null)
+					{
+                        GroupAccessDD.Items.Add(new ListItem(AccessLevelText(defaultGroupAccess) + " (" + defaultGroupAccess + ")", GetString(defaultGroupAccess)));
+					}
+				}
+                GroupAccessDD.SelectedValue = GetString(defaultGroupAccess);
+			}
+		}
+
+        private void LoadRelationTypeDropDown()
+        {
+            if ((IsSite("GeorgiaFacts") || IsSite("Adams")) && groupBaseTypeID == 1) // Buildings
+            {
+                RelationTypePanel.Visible = true;
+                RelationTypeLabel.Text = "Role:";                     
+                RelationTypeDD.Items.Add(new ListItem("Select Role...", "0"));
+                RelationTypeDD.Items.Add(new ListItem("Realtor", "61180"));
+                RelationTypeDD.Items.Add(new ListItem("Owner", "61120"));
+                if (IsSite("GeorgiaFacts"))
+                {
+                    RelationTypeDD.Items.Add(new ListItem("Georgia Account Rep", "62100"));
+                    RelationTypeDD.Items.Add(new ListItem("Local Economic Development Contact", "61311"));
+                }
+            }
+            if (IsSite("GPCP"))
+            {
+                RelationTypePanel.Visible = true;
+                RelationTypeLabel.Text = "Group Role:";
+                RelationTypeDD.Items.Add(new ListItem("", ""));
+                RelationTypeDD.Items.Add(new ListItem("Teacher", "61350"));
+                RelationTypeDD.Items.Add(new ListItem("Parent", "60300"));
+                RelationTypeDD.Items.Add(new ListItem("Adult", "60020"));
+                RelationTypeDD.Items.Add(new ListItem("Newborn (Under 1)", "60012"));
+                RelationTypeDD.Items.Add(new ListItem("Preschooler (1-4)", "60014"));
+                RelationTypeDD.Items.Add(new ListItem("Child (5-12)", "60015"));
+                RelationTypeDD.Items.Add(new ListItem("Teenager (13-19)", "60017"));
+                RelationTypeDD.Items.Add(new ListItem("Senior", "60090"));
+            }
+            if (GetRequestInt("RelationTypeID") > 0)
+            {
+                if (RelationTypeDD.Items.FindByValue(GetRequestString("RelationTypeID")) != null)
+                {
+                    RelationTypeDD.SelectedValue = GetRequestString("RelationTypeID");
+                }
+            }
+        }
+
+        private void LoadMailPreferences(int emailPreference, int postalPreference)
+        {
+            // Called after LoadUser
+            EmailPreferenceRBL.Items.Add(new ListItem("Regular Email (monthly)", "6"));
+            if (emailPreference != 1)
+                EmailPreferenceRBL.Items.Add(new ListItem("Infrequent Email", "4")); // Approximately Quarterly
+            if (emailPreference == 3) EmailPreferenceRBL.Items.Add(new ListItem("Twice a year", "3"));
+            if (emailPreference == 2) EmailPreferenceRBL.Items.Add(new ListItem("Annually", "2"));
+            if (emailPreference == 1) EmailPreferenceRBL.Items.Add(new ListItem("Email not preferred", "1"));
+            EmailPreferenceRBL.Items.Add(new ListItem("No Email", "0"));
+            EmailPreferenceRBL.SelectedValue = GetString(emailPreference);
+            if (postalPreference >= 2) ViaPostalMailCB.Checked = true; // Level 1 indicates not interested, but not totally excluded.
+        }
+		private void LoadSiteAccess()
+		{
+			LoadSiteAccess(0);
+		}
+		private void LoadSiteAccess(int maxAccessOverride)
+		{	// copied from LoadMember Roles
+			//if (orgID <= 0) return;
+			
+			// Text is Role Title and value is member Access level
+
+			int maxAccess = 0;
+
+			if (IsSite("GeorgiaTourism") && orgID == 38121 && UserAccess >= 4) 
+			{
+				// Allows fulfillment operators to be granted the proper site access level.
+				SiteAccessPanel.Visible = true;
+			}
+			if (UserAccess < 4) return;
+            
+			if (IsSite("GeorgiaTourism") && orgID == 38121) 
+			{
+				SiteAccessDD.Items.Add(new ListItem("Operator","4"));
+				SiteAccessDD.Items.Add(new ListItem("Senior Operator","6"));
+				SiteAccessDD.Items.Add(new ListItem("Warehouse","5"));
+				SiteAccessDD.Items.Add(new ListItem("Reporting","7"));
+				SiteAccessDD.Items.Add(new ListItem("Administrator","8"));
+				SiteAccessDD.SelectedValue = "4";	//Default
+			} 
+			else 
+			{
+				if(maxAccessOverride > 0)
+				{
+					maxAccess = maxAccessOverride;
+				}
+				else
+				{
+					if(UserAccess > 5)
+					{
+						maxAccess = UserAccess;
+					}
+					else
+					{
+						if(PartnerAccess < UserAccess)
+						{
+							maxAccess = UserAccess; // Up to 5
+						}
+						else if(PartnerAccess <= 5)
+						{
+							maxAccess = PartnerAccess;
+						}
+						else	// Partner Access > 5
+						{
+							maxAccess = 5;
+						}
+					}
+				}
+				
+				SiteAccessDD.Items.Clear();
+
+				if(maxAccess >= 1) SiteAccessDD.Items.Add(new ListItem("Guest (1)","1"));
+				if(maxAccess >= 2) SiteAccessDD.Items.Add(new ListItem("Member (2)","2"));
+				if(maxAccess >= 3) SiteAccessDD.Items.Add(new ListItem("Member+ (3)","3"));
+				if(maxAccess >= 4) SiteAccessDD.Items.Add(new ListItem("Assistant (4)","4"));
+				if(maxAccess >= 5) SiteAccessDD.Items.Add(new ListItem("Site Staff (5)","5"));
+				if(maxAccess >= 6) SiteAccessDD.Items.Add(new ListItem("Site Moderator (6)","6"));
+				if(maxAccess >= 7) SiteAccessDD.Items.Add(new ListItem("Site Manager (7)","7"));
+				if(maxAccess >= 8) SiteAccessDD.Items.Add(new ListItem("Administrator (8)","8"));
+				if (UserAccess >= 9)
+				{
+					SiteAccessDD.Items.Add(new ListItem("SysAdmin (9)","9"));
+				}
+			}
+		}
+
+		private void LoadPhoneTypes()
+		{
+			for(int i = 1; i <= NumPhoneFields; i++)
+			{
+				DropDownList dd = (DropDownList)PhonePH.FindControl("PhoneTypeDD" + i);
+				if(dd != null)
+				{
+                    if (!IsSite("GeorgiaFacts"))
+                    {
+                        dd.Items.Add(new ListItem("Home Phone", "1"));
+                    }
+					dd.Items.Add(new ListItem("Office Phone", "2"));
+					dd.Items.Add(new ListItem("Fax Number", "3"));
+					dd.Items.Add(new ListItem("Cell Phone", "4"));
+					dd.Items.Add(new ListItem("Pager", "5"));
+					dd.Items.Add(new ListItem("Voice Mail", "6"));
+					dd.SelectedValue = i.ToString();
+				}
+				else
+				{
+					throw new Exception("Cannot find phone controls");
+				}
+			}
+
+            if (!IsSite("GeorgiaFacts"))
+            {
+                SearchPhoneTypeDD.Items.Add(new ListItem("Home Phone", "1"));
+            }
+			SearchPhoneTypeDD.Items.Add(new ListItem("Office Phone", "2"));
+			SearchPhoneTypeDD.Items.Add(new ListItem("Fax Number", "3"));
+			SearchPhoneTypeDD.Items.Add(new ListItem("Cell Phone", "4"));
+			SearchPhoneTypeDD.Items.Add(new ListItem("Pager", "5"));
+			SearchPhoneTypeDD.Items.Add(new ListItem("Voice Mail", "6"));
+			SearchPhoneTypeDD.SelectedValue = "1";
+		}
+
+        private void LoadCaptcha()
+        {
+            // The reCaptcha control must be loaded dynamically in case some sites don't use it.
+            // It will throw an exception if it is defined in the aspx page and no public/private
+            // keys are defined or if they are null or empty.
+            if (IsCaptchaEnabled)
+            {
+                ReCaptcha = new ReCaptchaV2();
+
+                ReCaptcha.PublicKey = RecaptchaPublicKey;
+                ReCaptcha.PrivateKey = RecaptchaPrivateKey;
+                ReCaptcha.ErrorMessage = "Captcha is missing or invalid";
+
+                CaptchaPanel.Controls.Add(ReCaptcha);
+            }
+        }
+
+		private void LoadDefaultSources()
+		{
+			if (IContains(Host,"localhost")) return;
+            SourcePanel.Visible = true;
+				
+			SqlConnection conn = new SqlConnection(FulfillmentConnString);
+			conn.Open();
+
+			string sql = "SELECT ID, Name from lstSource WHERE Show = 1 ORDER BY ID";
+
+			SqlCommand cmd = new SqlCommand(sql, conn);
+			SqlDataReader reader = cmd.ExecuteReader(CommandBehavior.CloseConnection);
+
+			DefaultSourceDD.DataSource = reader;
+			DefaultSourceDD.DataTextField = "Name";
+			DefaultSourceDD.DataValueField = "ID";
+			DefaultSourceDD.DataBind();
+			
+			reader.Close();
+		}
+		protected void LoadListDetails()
+		{
+			if (orgID <= 0) return;
+			// Groups and organizations may require that a user
+			// enter a code before joining their list.
+			string sql = string.Format("SELECT (SELECT TOP 1 {0} FROM Logon WHERE Logon.ItemID = {1} ORDER BY Logon.Access Desc) AS ListPassword, List.MembershipDatesAccess", EncryptionUtil.GetDecryptionPasswordClause("SiteID"), orgID);
+			sql += " FROM List WHERE List.ListID = " + orgID;
+			SqlDataReader reader = ExecuteReader(sql);
+			while(reader.Read())
+			{
+				membershipDatesAccess = GetInt(reader["MembershipDatesAccess"]);
+				ListActivationCode = GetString(reader["ListPassword"]);
+			}
+			reader.Close();
+
+            // Changed ItemAccess to PartnerAccess during conversion to MS
+			if (PartnerAccess >= 4 && ListActivationCode.Length > 0)
+			{ // Editors are not required to reenter access code.
+                ActivationCodeNote.Text = "<span style='color:#218721;'><span style='font-weight:bold;'>Activation code:</span> " + ListActivationCode + "</span><br /><br />Users who register themselves without the assistance of a group editor, will be required to enter this code to initially register.  The user you are currently adding will automatically be assigned a unique username and password (different from the group activation code).  Users may request a username and password reminder online.<br /><br />";
+				ActivationCodePanel.Visible = false;
+				return;
+			}
+			if (ListActivationCode.Length > 0)
+			{
+				ActivationCodePanel.Visible = true;
+			}
+		}
+
+        protected void SaveAgentSettings()
+        {
+            if (AgentPanel.Visible)
+            {
+                // For the Adams Realty site. If the user indicates they are working with an agent
+                // then set their site access level to 2 unless it's already higher. This assumes
+                // that the users that are contacting agents are new or existing low level users.
+
+                if (WorkingWithAgentCB.Checked)
+                {
+                    Logon logon = new Logon();
+                    logon.es.Connection.Name = ConnectionName;
+                    if (logon.Load(uid, SiteID))
+                    {
+                        if (logon.Access < 2)
+                        {
+                            logon.Access = 2;
+                            logon.Save();
+                        }
+                    }
+                }
+            }
+        }
+
+		private void SaveSubscription(int parentID)
+		{
+            if (!MemberDatesPanel.Visible && !GroupFieldsPanel.Visible) return;
+            
+			// Experimental. Saving Relation record relating user to site needed for GeorgiaGolf coupon page expiration.
+			if (parentID <= 0) parentID = SiteID;
+
+			if(!Page.IsValid) return;
+
+			string sql = string.Empty;
+
+			int	memberAccess = GetInt(GroupAccessDD.SelectedValue);	// Default is 2
+            //if (IsNull(memberAccess))
+            //{
+            //    memberAccess = 1; // Added to correct error when user is not logged on to GeorgiaTourism.  Could be set to 2 or 0 instead.
+            //}
+
+            if (memberAccess < 0) return; // Selected: Not in group.
+
+			string RelationStartDate = MemberStartDateTB.Text;
+			string RelationEndDate = MemberEndDateTB.Text;
+			string roleTitle = RelationTitleTB.Text;
+            string relationTypeID = GetString(RelationTypeDD.SelectedValue);
+            if (IsNull(relationTypeID))
+            {
+                relationTypeID = "0";   // non-null, defaults to 0
+            }
+			if(IsSite("GeorgiaTourism") && parentID == 38121)
+			{
+				// Fulfillment site saves a text description of the roleTitle.
+				roleTitle = GroupAccessDD.SelectedItem.Text;
+			}
+			roleTitle = roleTitle.Replace("'", "''");
+
+			DateTime createDate = DateTime.Now;
+			DateTime modifyDate = DateTime.Now;
+			if (IsNull(RelationStartDate))
+			{
+                // Avoiding inserting new relation row when editor does not specify a membership start date.
+				//RelationStartDate = GetString(createDate);
+			}
+
+            bool existingRelation = false;
+            int existingStatus = 0;
+            int existingAccess = 0;
+            bool existingPublicContact = false;
+            string existingRelationTitle = "";
+
+            sql = "SELECT Relation.Status, Relation.RelationTitle, Relation.StartDate, Relation.EndDate, Relation.CreateDate, Relation.PublicContact, Relation.Access FROM Relation WHERE ChildID = " + uid + " AND ParentID = " + parentID;
+            SqlDataReader reader = ExecuteReader(sql);
+            while (reader.Read())
+            {
+                existingRelation = true;
+                existingStatus = GetInt(reader["Status"]);
+                existingAccess = GetInt(reader["Access"]);
+                existingPublicContact = GetBool(reader["PublicContact"]);
+                existingRelationTitle = GetString(reader["RelationTitle"]);
+                // Allows existing relations with no StartDate to be edited.
+                if (RelationStartDate.Length == 0)
+                {
+                    RelationStartDate = GetString(reader["StartDate"]);
+                }
+                if (RelationStartDate.Length == 0)
+                {
+                    RelationStartDate = GetString(reader["CreateDate"]); // Allows Relation to be updated below.
+                }
+                RelationEndDate = GetString(reader["EndDate"]);
+            }
+            reader.Close();
+
+            if (existingPublicContact == PublicContactCB.Checked && 
+                existingAccess == memberAccess && 
+                existingRelationTitle == roleTitle && 
+                RelationStartDate == MemberStartDateTB.Text && 
+                RelationEndDate == MemberEndDateTB.Text
+                && existingStatus == 1)
+            {
+                // No changes made
+                return;
+            }
+            if (testing) Write("Test: existingStatus: " + existingStatus + " existingAccess: " + existingAccess + "<br />");
+            if (RelationStartDate.Length > 0)
+            {
+                if (testing) Write("Test: RelationStartDate " + RelationStartDate + "<br />");
+                if (existingRelation)
+                {
+                    string updateSql = string.Empty;
+                    updateSql = "UPDATE Relation SET Access = {0}, Modifier = {1}, ModifyDate = '{2}', RelationTitle = '{3}', RelationTypeID = {4}, PublicContact = {5},";
+                    if (MemberStartDateTB.Text.Length < 5)
+                    {
+                        updateSql += " StartDate = null,";
+                    }
+                    else
+                    {
+                        updateSql += " StartDate = '{6}',";
+                    } 
+                    if (MemberEndDateTB.Text.Length < 5 || MemberDatesPanel.Visible == false)
+                    {
+                        updateSql += " EndDate = null,";
+                    }
+                    else
+                    {
+                        updateSql += " EndDate = '{7}',";
+                    }
+                    updateSql += " Status = 1";
+                    
+                    updateSql += " WHERE ChildID = {8} and ParentID = {9}";
+                    updateSql = string.Format(updateSql, memberAccess, UserID, modifyDate, roleTitle, relationTypeID, (PublicContactCB.Checked ? 1 : 0), MemberStartDateTB.Text, MemberEndDateTB.Text, uid, parentID);
+                    
+                    ExecuteNonQuery(updateSql);
+                }
+                else // NEW RELATION
+                {
+                    string insertSql = string.Empty;
+                    insertSql = "INSERT INTO Relation (ChildID,ParentID,Status,Access,StartDate,EndDate,Modifier,ModifyDate,Creator,CreateDate, RelationTitle, RelationTypeID, PublicContact) VALUES ({0},{1},{2},{3},'{4}',";
+                    if (MemberEndDateTB.Text.Length < 5)
+                    {
+                        insertSql += "null,";
+                    }
+                    else
+                    {
+                        insertSql += "'{5}',";
+                    }
+                    insertSql += "{6},'{7}',{8},'{9}','{10}', {11}, {12})";
+                    insertSql = string.Format(insertSql, uid, parentID, 1, memberAccess, RelationStartDate, RelationEndDate, UserID, modifyDate, UserID, createDate, roleTitle, relationTypeID, (PublicContactCB.Checked ? 1 : 0));
+
+                    try
+                    {
+                        // This fails when a relation.startdate already exists that matches the createdate.
+                        ExecuteNonQuery(insertSql);
+
+                        SaveRelationHistory(parentID, uid); // Moves all except the most recent
+                    }
+                    catch (Exception ex)
+                    {
+                        string msg = ex.Message;
+                    }
+                }
+                // Reactivate user in the current site so they appear in group lists.
+                string siteitemSql = string.Format("UPDATE Site_Item SET ItemStatus = 1 WHERE ItemStatus >= 8 AND Site_Item.ItemID = {0} AND Site_Item.SiteID = {1}", uid, SiteID);
+                ExecuteNonQuery(siteitemSql);
+            }
+
+			if(IsSite("GeorgiaTourism") && parentID == 38121)
+			{
+				SaveFulfillmentUser();
+			}
+			//SendAdminEmail("User added to list " + orgID);
+		}
+        protected void SaveRelationHistory(int parentID, int childID)
+        { // Copy into RelationHistory, then delete rows moved from Relation table.
+            // Places to update additions to Relation table: Member/Join, Core/Member/Form, Core/Member/AddGroup, Core/Site/Cleanup, Individual object
+            string columns = "RelationID,ParentID,ChildID,RelationTypeID,RelationTitle,Status,Access,Priority,Distance,PublicContact,StartDate,EndDate,Creator,CreateDate,Modifier,ModifyDate,ServiceStartDate,ServiceEndDate,InvoiceItemID,rowguid";
+            string whereClause = "Relation.ParentID = " + parentID + " AND Relation.ChildID = " + childID + " AND Relation.RelationID NOT IN (SELECT TOP 1 R.RelationID FROM Relation R WHERE R.ParentID = " + parentID + " AND R.ChildID = " + childID + " ORDER BY R.RelationID DESC)";
+            ExecuteNonQuery("INSERT INTO RelationHistory (" + columns + ") SELECT " + columns + " FROM Relation WHERE " + whereClause);
+            ExecuteNonQuery("DELETE Relation WHERE " + whereClause);
+        
+        }
+		protected void SubmitBN_Click(object sender, System.EventArgs e)
+		{
+            EmailTB1.Text = EmailTB1.Text.Trim();
+			if(uid <= 0)
+			{
+				uid = GetInt(ExecuteScalar("SELECT ItemID FROM Item WHERE rowguid = '" + ItemGuid.ToString() + "'"));
+				if (uid > 0) // Occurs when backing up.
+				{
+					PopulateUrl(); // Newly found uid is used in redirect link.
+					newItemRecalledFromGuid = true;
+				}
+			}
+			if(ValidateData() == false)
+			{
+                return;
+			}
+			if (uid <= 0) newuser = true;
+			
+			//UserDO user = new UserDO();
+            Individual user = new Individual();
+            
+            // Comment out 5/28/2008
+            /*
+            string userName = "";
+			string password = "";
+
+            if (!newuser)
+			{ 
+				// Checking later in sequence causes timeout.
+				logonCount = GetInt(ExecuteScalar("SELECT COUNT(*) FROM logon INNER JOIN usr on Logon.ItemID = usr.uid WHERE usr.uid = '" + uid + "' AND logon.SiteID = " + SiteID));
+			
+				userName = FirstNameTB.Text.Trim()[0] + LastNameTB.Text.Trim();
+				userName = userName.Replace("'", "");
+				password = string.Empty;
+
+                //BUGBUG - commented out during conversion to ms
+				//user.GetUniqueLogon(ref userName, SiteID, out password);
+			}
+			*/
+
+            bool checkEmails = false;
+            List<string> emailsToSearch = new List<string>();
+            List<string> emailsFound = new List<string>();
+
+            for (int i = 1; i <= 3; i++)
+            {
+                TextBox emailTB = (TextBox)EmailEditPanel.FindControl("EmailTB" + i);
+                if (emailTB != null)
+                {
+                    string email = emailTB.Text.Trim().ToLower();
+
+                    // For new users, check for existing email address.
+                    // For existing users, check for existing email only if the email has been changed.
+                    if ((uid <= 0 && !IsNull(email)) ||
+                        (uid > 0 && !IsNull(email) && !SelectedUserEmails.Contains(email)))
+                    {
+                        checkEmails = true;
+                        emailsToSearch.Add(email);
+                    }
+                }
+                else
+                {
+                    throw new Exception("Cannot find email controls");
+                }
+            }
+
+			if (checkEmails)
+			{	// BaseTypeID = 6 is used to limit to individuals.  This allows existing organizations to have the same email address.
+				StringBuilder sb = new StringBuilder();
+                sb.Append("SELECT Email.EmailID, Email.ItemID, Email.Email, Email.Priority");
+                sb.Append(" FROM email");
+                sb.Append(" JOIN site_item ON Email.ItemID = site_item.itemid");
+                sb.Append(" JOIN Item ON Email.ItemID = Item.ItemID");
+                sb.Append(" WHERE Item.BaseTypeID = 6 AND (Site_Item.ItemStatus < 8 AND Item.ItemStatus < 8)");
+                sb.AppendFormat(" AND Email.Email IN ({0}) ", ReaderSupport.CreateInSQL(string.Join(",", emailsToSearch.ToArray())));
+                sb.AppendFormat(" AND site_item.SiteID = {0}", SiteID);
+				SqlDataReader reader = ExecuteReader(sb.ToString());
+                int emailID = 0;
+                int emailItemID = 0;
+                string email = string.Empty;
+                int emailPriority = 0;
+
+                while (reader.Read())
+                {
+                    emailID = GetInt(reader["EmailID"]);
+                    emailItemID = GetInt(reader["ItemID"]);
+                    email = GetString(reader["Email"]).ToLower();
+                    emailPriority = GetInt(reader["Priority"]);
+
+                    if (emailItemID != uid)
+                    {
+                        emailFound = true;
+                        if (!emailsFound.Contains(email))
+                        {
+                            emailsFound.Add(email);
+                        }
+                    }
+                    // 8/26/2013 - Comment out below. If the user sees the "An existing email was found" message and
+                    // doesn't re-save, their email will have been deleted. The individual object takes care of 
+                    // deleting the emails so they can be re-saved.
+                    /*
+                    else // found another email for this user matching the one we're trying to save. Delete it so that the current email can be updated with the new value.
+                    {
+                        string sql = string.Format("DELETE FROM Email WHERE EmailID = {0}", emailID);
+                        ExecuteNonQuery(sql);
+                    }
+                     */
+                }
+
+				reader.Close();
+			}
+			if (emailFound == true) 
+			{
+                if (emailsFound.Count == 1)
+                {
+                    Session["message"] = string.Format("An existing email, {0}, was found matching the one you entered.  Please enter a different email address, or request that a username and password reminder be sent to you via email.", emailsFound[0]);
+                }
+                else
+                {
+                    Session["message"] = string.Format("The existing emails {0} were found matching the ones you entered.  Please enter different email addresses, or request that a username and password reminder be sent to you via email.", string.Join(" and ", emailsFound.ToArray()));
+                }
+				return;
+			}
+            if(!displayContact || (displayContact && newuser))
+            //if (newuser) // This was causing logon to be inserted again for existing user.
+			{ 
+                // Don't save contact changes to existing user.  User might intend to enter contact info for another person.
+				//SaveUser(userName,password);
+				//UpdateProfile();
+                SaveIndividual();
+				if(displayInterests)
+				{
+					SaveInterests();
+				}
+			}
+            if (IsSite("Adams") && AgentPanel.Visible)
+            {
+                SaveAgentSettings();
+            }
+            SaveSubscription(PartnerID);
+
+            if (VolunteerInfoPanel.Visible)
+            {
+                SaveVolunteerInfo(uid);
+            }
+
+            if (PartnerID > 0)
+            {
+                // Generate a static version of the parent (if it is a location or organization)
+                // Also set the modifier and modify date to indicate that the location or organization have been updated.
+                string sql = string.Format("UPDATE Item SET Item.ModifyDate = '{0}', Item.Modifier = {1}, Item.MakeStatic = 1 WHERE Item.ItemID = {2} AND Item.BaseTypeID IN (1, 3)", DateTime.Now, UserID, PartnerID);
+                ExecuteNonQuery(sql);
+            }
+
+            if (GetRequestInt("contactroleid") > 0 && UserAccess >= 8)
+            {
+                InsertSiteContact(GetRequestInt("contactroleid"));
+            }
+
+            // Now handled by Individual object
+            //if(SendWelcomeCB.Checked && !IsNull(EmailTB1.Text))
+            //{
+            //    SendWelcomeEmail();
+            //}
+
+			if(displayContact)
+			{
+				SendCorrespondence();
+				if(IsSite("NewUrbanBuilders") || IsSite("DreamStudio") || IsSite("Meddin") || IsSite("Adams")
+                    || IsSite("GeorgiaFacts"))
+				{
+					SaveNotification();
+				}
+			}
+			if (GetRequestString("popup").Length > 0)
+			{
+				PopulateHiddensAndClose(uid,FullName);
+				return;
+			}
+			if (UserState.Authenticated) 
+			{
+				if (displayContact)
+				{
+					if(contactUser)
+					{
+						Session["message"] = "Thank you, your message has been sent.";
+					}
+					else
+					{
+						Session["message"] = "Thank you, your input has been submitted.";
+					}
+				}
+				else if (newuser == true && uid == UserID) 
+				{
+					Session["message"] = "Thank you for registering.";
+				}
+				else
+				{
+					Session["message"] = "Thank you, your updates have been saved.";
+				}
+                if (testing) Write("Redirect to: " + url + "<br />");
+				if (!testing)
+				{
+                    Response.Redirect(url);
+				}
+			} 
+			else
+			{
+				Session["message"] = "User not authenticated.";
+				Response.Redirect(url);
+			}
+		}
+		private void PopulateUrl()
+		{ // Used in links within HTML and final redirect.
+			url = Request.Form["lasturl"];
+			if (IContains(Request.Form["lasturl"],"settings.aspx"))
+			{
+				url = GetUrl("/default.aspx"); // Prevent loop back to settings page.
+			}
+			if (!IsNull(GetRequestString("gosearch")))
+			{
+				url = GetRequestString("gosearch").Replace("[uid]",GetString(uid));
+			}
+            else if ((IsSite("GeorgiaFacts") || IsSite("GeorgiaParks") || IsSite("GeorgiaGolf"))) 
+                // Omit when gologon is present so use of order form shopping cart links does not redirect to settings page.
+                // LH remove 8/12/2009 - starting from signin page passes gologon, so settings page is missed.
+                // && GetRequestString("gologon").Length == 0
+            { // User always goes to settings page next, then welcome page if contained in original link.
+                if (newuser)
+                {
+                    // Settings page uses newuser=1 to determin which coupon page to redirect to.
+                    url = GetUrl("/net/member/settings.aspx?newuser=1&uid=" + uid + "&gonext=" + Server.UrlEncode(GetRequestString("gonext")));
+                }
+                else if(uid == UserID)
+                {
+                    url = GetUrl("/net/member/settings.aspx?uid=" + uid + "&gonext=" + Server.UrlEncode(GetRequestString("gonext")));
+                }
+            }
+            // Need a "type of Organization" dropdown and "Create a new organization profile for online directory." before using for EE.
+            // Disabling for now.  Reactivate for GPNA soon with checkbox.
+            // But avoid activation for EE since certificate applicants do not need an org profile.
+            else if (UserAccess >= 9 && ((newuser && !IsNull(CompanyTB.Text)) || addOrganization))
+            {
+                // new user and company field filled in or existing user and company changed - assume new company
+                url = GetShortLink("/net/org/add.aspx?title=" + Server.UrlEncode(CompanyTB.Text) + "&memberid=" + uid, 0);
+            }
+            else if (!IsNull(GetRequestString("gonext")))
+            {
+                url = GetRequestString("gonext");
+            }
+            else if (!IsNull(GetRequestString("gologon")))
+            {
+                url = GetRequestString("gologon");
+            }
+            else if (!IsNull(GetRequestString("golast")))
+            {
+                url = GetRequestString("golast");
+            }
+            //if (IsNull(url) && orgID == uid) // Why would the orgID match the uid?
+            //{
+            //    url = GetLink("/net/member/account.aspx",uid);
+            //}
+			if (IsNull(url))
+			{
+                if (orgID > 0 && orgID != SiteID) // "Update Site Membership Dates" passes in ListID.  Including orgID != SiteID prevents redirecting to mostly-blank detail page when SiteID is ItemID.  Might later add other way to trigger when to redirect using BuildLink and supporting sites that are valid orgs.
+				{
+					string randomString = new Random().Next().ToString().Substring(0,5);
+					//url = GetLink("/net/content/contacts.aspx?ran=" + randomString,orgID); // NEW USER DOES NOT APPEAR UNTIL PAGE IS RELOADED - Even when server.transfer is not used.
+					url = GetUrl("/net/content/go.aspx?ran=" + randomString,orgID);
+				}
+                else if (!IsNull(LastUrl) && !newuser) // If adding a new user go to the new user's account page instead of LastUrl
+                {
+                    url = LastUrl;
+                }
+				else 
+				{
+					url = GetUrl("/net/member/account.aspx?uid=" + uid,0); // Use of GetLink passes PartnerID. ItemID is set to 0 to prevent account page from using ItemID as uid.
+				}
+			}
+			url = url.Replace("[uid]",GetString(uid));
+		}
+		private void PopulateHiddensAndClose(int uid, string userName)
+		{
+			string userIdTB = "";
+			string userNameTB = "";
+			if (!(Request.QueryString["formUserIdTB"] == null && Request.QueryString["formUserNameTB"] == null ))
+			{
+				userIdTB = Request.QueryString["formUserIdTB"].ToString();
+				userNameTB = Request.QueryString["formUserNameTB"].ToString();
+			}
+			// Send uid and UserName back to form.
+			WriteHtml("<SCRIPT language='JavaScript'>");
+			WriteHtml("<!--");
+
+			WriteHtml("ReturnValues('" + userIdTB + "','" + userNameTB + "');");
+			
+			// No effect
+			//WriteHtml("window.opener.focus;");
+
+			WriteHtml("closeWindow();");
+			WriteHtml("function ReturnValues(toUserIdTextBoxID,toUserNameTextBoxID)");
+			WriteHtml("{");
+			WriteHtml("var toUserIdBox = window.opener.document.getElementById(toUserIdTextBoxID);");
+			WriteHtml("var toUserNameBox = window.opener.document.getElementById(toUserNameTextBoxID);");
+			
+			WriteHtml("toUserIdBox.value = '" + uid.ToString() + "';");
+			WriteHtml("toUserNameBox.value = '" + userName + "';");
+			
+			WriteHtml("}");
+			WriteHtml("function closeWindow() ");
+			WriteHtml("{");
+			WriteHtml("window.close();");
+			WriteHtml("}");
+			WriteHtml("//-->");
+			WriteHtml("</SCRIPT>");
+		}
+
+    private bool ValidateData()
+    {
+        ActivationCodeErrorPanel.Visible = false;
+        UserNamePasswordErrorPanel.Visible = false;
+        MailingAddressErrorPanel.Visible = false;
+        SummaryErrorPanel.Visible = false;
+        ErrorLabel.Text = "";
+        CaptchaErrorLabel.Visible = false;
+
+        bool status = true;
+        StringBuilder sbError = new StringBuilder();
+
+        if (SendWelcomeCB.Checked && !EmailValidator1.Enabled)
+        {
+            EmailValidator1.Enabled = true;
+            if (LogonPanel.Visible == true)
+            {
+                EmailValidator1.ErrorMessage = "Email address is required when '" + SendWelcomeCB.Text + "' is checked<br />";
+            }
+            else
+            {
+                EmailValidator1.ErrorMessage = "Email address is required<br />";
+            }
+            EmailValidator1.Validate();
+        }
+        else if (!SendWelcomeCB.Checked && EmailValidator1.Enabled)
+        {
+            // Validate again in case user changed their mind and unchecked the Send Email checkbox
+            EnableValidators();
+            Validate();
+        }
+
+        if (CaptchaPanel.Visible && !ReCaptcha.IsValid)
+        {
+            CaptchaErrorLabel.Visible = true;
+        }
+
+        if (!Page.IsValid)
+        {
+            return false; // Don't proceed with remaining validations since they may be testing with invalid or missing data.
+        }
+
+        if (ListActivationCode.Length > 0 && ListActivationCode.ToLower() != ActivationCodeTB.Text.ToLower() && ActivationCodePanel.Visible == true)
+        {
+            ActivationCodeErrorPanel.Visible = true;
+            ActivationCodeErrorLabel.Text = "Incorrect Access Code.";
+            status = false;
+        }
+
+        List<string> emails = new List<string>();
+        if (EmailEditPanel.Visible)
+        {
+            for (int i = 1; i <= 3; i++)
+            {
+                TextBox emailTB = (TextBox)EmailEditPanel.FindControl("EmailTB" + i);
+                if (emailTB != null)
+                {
+                    string email = emailTB.Text.Trim().ToLower();
+                    if (!IsNull(email))
+                    {
+                        if (emails.Contains(email))
+                        {
+                            sbError.Append("<li>" + "Please remove duplicate email addresses." + "</li>");
+                            status = false;
+                            break;
+                        }
+                        else
+                        {
+                            emails.Add(email);
+                        }
+                    }
+                }
+                else
+                {
+                    throw new Exception("Cannot find email controls");
+                }
+            }
+        }
+
+        ArrayList phoneList = new ArrayList();
+        bool displayedPhoneListError = false;
+        int faxQuantity = 0;
+
+        for (int i = 1; i <= NumPhoneFields; i++)
+        {
+            DropDownList phoneTypeDD = (DropDownList)PhonePH.FindControl("PhoneTypeDD" + i);
+            TextBox areaCodeTB = (TextBox)PhonePH.FindControl("AreaCodeTB" + i);
+            TextBox phoneTB = (TextBox)PhonePH.FindControl("PhoneTB" + i);
+            TextBox phoneExtTB = (TextBox)PhonePH.FindControl("PhoneExtTB" + i);
+            Label phoneErrorLabel = (Label)PhonePH.FindControl("PhoneErrorLabel" + i);
+
+            if (!IsNull(areaCodeTB) && !IsNull(phoneTB) && !IsNull(phoneExtTB) && !IsNull(phoneErrorLabel))
+            {
+                if (!IsNull(areaCodeTB.Text) || !IsNull(phoneTB.Text) || !IsNull(phoneExtTB.Text))
+                {
+                    string areacode = areaCodeTB.Text;
+                    string phone = phoneTB.Text;
+                    string ext = phoneExtTB.Text;
+
+                    try
+                    {
+                        PhoneUtil.GetFormattedPhone(ref areacode, ref phone, ref ext);
+                        phoneErrorLabel.Visible = false;
+                    }
+                    catch
+                    {
+                        phoneErrorLabel.Text = "Phone is not valid";
+                        phoneErrorLabel.Visible = true;
+                        status = false;
+                    }
+
+                    string key = string.Format("{0} {1}{2}", phoneTypeDD.SelectedValue, areacode, phone);
+                    if (phoneList.IndexOf(key) >= 0 && !displayedPhoneListError)
+                    {
+                        sbError.Append("<li>" + "Please enter a unique phone number and type." + "</li>");
+                        displayedPhoneListError = true;
+                        status = false;
+                    }
+                    else
+                    {
+                        phoneList.Add(key);
+                    }
+
+                    if (phoneTypeDD.SelectedValue == "3")
+                    {
+                        faxQuantity++;
+                    }
+
+                    if (faxQuantity > 1 && !displayedPhoneListError)
+                    {
+                        // The contactinfo view returns more than one row for a user if more than one fax number is entered.
+                        sbError.Append("<li>" + "Please enter only 1 fax number." + "</li>");
+                        displayedPhoneListError = true;
+                        status = false;
+                    }
+                }
+            }
+            else
+            {
+                throw new Exception("Cannot find phone controls");
+            }
+        }
+
+        if (UserNamePasswordPanel.Visible == true)
+        {
+            if (PasswordTB.Text.Length == 0)
+            {
+                // Should never get here - if we do then the validators are not enabled.
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "Please enter a password below.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+            else if (PasswordTB.Text != Password2TB.Text)
+            {
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "Passwords do not match.  Please re-enter.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+            else if (PasswordTB.Text.ToLower().Contains("drop") || UsernameTB.Text.ToLower().Contains("drop"))
+            {
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "For database security, we do not allow the word \"drop\" in a username or password.  Please enter a different word.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+            else if (PasswordTB.Text.ToLower().Contains("delete") || UsernameTB.Text.ToLower().Contains("delete"))
+            {
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "For database security, we do not allow the word \"delete\" in a username or password.  Please enter a different word.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+            else if (PasswordTB.Text.ToLower().Contains("select") || UsernameTB.Text.ToLower().Contains("select"))
+            {
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "For database security, we do not allow the word \"select\" in a username or password.  Please enter a different word.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+            else if (PasswordTB.Text.ToLower().Contains("insert") || UsernameTB.Text.ToLower().Contains("insert"))
+            {
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "For database security, we do not allow the word \"insert\" in a username or password.  Please enter a different word.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+            else if (PasswordTB.Text.ToLower().Contains("xp_") || UsernameTB.Text.ToLower().Contains("xp_"))
+            {
+                UserNamePasswordErrorPanel.Visible = true;
+                UserNamePasswordErrorLabel.Text = "For database security, we do not allow the word \"xp_\" in a username or password.  Please enter a different word.";
+                sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                status = false;
+            }
+
+            if (uid <= 0)
+            {   // Check that username is unique.  Check all sites.
+                if (0 < GetInt(ExecuteScalar("SELECT TOP 1 Logon.ItemID FROM Logon WHERE Logon.u = '" + UsernameTB.Text.Trim() + "'")))
+                {
+                    UserNamePasswordErrorPanel.Visible = true;
+                    UserNamePasswordErrorLabel.Text = "The username entered is already in use.";
+                    sbError.Append("<li>" + UserNamePasswordErrorLabel.Text + "</li>");
+                    status = false;
+                }
+            }
+        }
+        // EEinGeorgia does not require address.  Assuming others do not want it either.
+        if (UserAccess < 4 &&
+            (IsSite("eenc") || (ViaPostalMailCB.Checked && HowToReceivePanel.Visible) || IsSiteGroup("GeorgiaDNR")))
+        {
+            // Require address fields to be populated
+            if (IsNull(MailingAddressEdit.StreetTB.Text.Trim()) ||
+                IsNull(MailingAddressEdit.CityTB.Text.Trim()) ||
+                IsNull(MailingAddressEdit.StateAbbreviation.Trim()) ||
+                IsNull(MailingAddressEdit.ZipTB.Text.Trim()))
+            {
+                MailingAddressErrorPanel.Visible = true;
+                MailingAddressErrorLabel.Text = "Please enter a complete address";
+                sbError.Append("<li>" + MailingAddressErrorLabel.Text + "</li>");
+                status = false;
+
+                MailingAddressPanel.Visible = true;
+            }
+        }
+
+        if (UserAccess < 4 && IsSite("eenc") && MailingAddressEdit.DisplayCountyDropDown && GetInt(MailingAddressEdit.CountyDD.SelectedValue) <= 0 && uid == UserID)
+        {
+            MailingAddressErrorPanel.Visible = true;
+            MailingAddressErrorLabel.Text = "Please select a county";
+            sbError.Append("<li>" + MailingAddressErrorLabel.Text + "</li>");
+            status = false;
+        }
+
+        if (SummaryTB.Text.Length > 1000)
+        {
+            SummaryTB.Text = SummaryTB.Text.Substring(0, 1000);
+            SummaryErrorPanel.Visible = true;
+            SummaryErrorLabel.Text = "The summary text is too long. The excess has been truncated.";
+            sbError.Append("<li>" + SummaryErrorLabel.Text + "</li>");
+            status = false;
+        }
+
+        if (VolunteerInfoPanel.Visible)
+        {
+            if (VolunteerStatusDD.SelectedValue == string.Empty &&
+                (RevocationExpirationDate.SelectedDate != NullDateTime ||
+                !IsNull(RevocationCommentTB.Text)))
+            {
+                sbError.Append("<li>" + "Please select a volunteer status." + "</li>");
+                status = false;
+            }
+        }
+
+        if (sbError.Length > 0)
+        {
+            sbError.Insert(0, "<ul>");
+            sbError.Append("</ul>");
+            sbError.Append("<hr style='height: 1px; border-width:0px; color:gray; background-color:gray' />");
+            ErrorLabel.Text = sbError.ToString();
+        }
+        return (status);
+    }
+
+        protected void PrefixCustomValidator_ServerValidate(object source, ServerValidateEventArgs args)
+        {
+            args.IsValid = true;
+            if (IsSite("eenc") && ((UserID > 0 && UserID == uid) || UserID == 0) && IsNull(NamePrefixDD.SelectedValue))
+            {
+                args.IsValid = false;
+            }
+        }
+
+        protected void RevocationCommentLengthValidator_ServerValidate(object source, ServerValidateEventArgs args)
+        {
+            if (args.Value.Length > MaxRevocationCommentLength)
+            {
+                RevocationCommentLengthValidator.Text = string.Format("Revocation Comment text may not exceed {0} characters. Currently there are {1} characters<br />", MaxRevocationCommentLength, args.Value.Length);
+                args.IsValid = false;
+            }
+            else
+            {
+                args.IsValid = true;
+            }
+        }
+
+        protected void VolunteerStaffNotesLengthValidator_ServerValidate(object source, ServerValidateEventArgs args)
+        {
+            if (args.Value.Length > MaxStaffNotesLength)
+            {
+                VolunteerStaffNotesLengthValidator.Text = string.Format("Staff Notes text may not exceed {0} characters. Currently there are {1} characters<br />", MaxStaffNotesLength, args.Value.Length);
+                args.IsValid = false;
+            }
+            else
+            {
+                args.IsValid = true;
+            }
+        }
+
+    protected void AsciiCustomValidator_ServerValidate(object source, ServerValidateEventArgs args)
+    {
+        // Ensure the Name, Company, and Address fields only contain Ascii characters since
+        // Authorize.net cannot process non-Ascii characters.
+
+        args.IsValid = true;
+
+        if (IsSiteGroup("GeorgiaDNR"))
+        {
+            // Name fields
+            if (args.IsValid && !IsValidAscii(FirstNameTB.Text)) { args.IsValid = false; }
+
+            if (args.IsValid && !IsValidAscii(MiddleNameTB.Text)) { args.IsValid = false; }
+
+            if (args.IsValid && !IsValidAscii(LastNameTB.Text)) { args.IsValid = false; }
+
+            // Company fields
+            if (args.IsValid && !IsValidAscii(CompanyTB.Text)) { args.IsValid = false; }
+
+            if (args.IsValid && !IsValidAscii(JobTitleTB.Text)) { args.IsValid = false; }
+
+            // Address fields
+            if (args.IsValid && !IsValidAscii(MailingAddressEdit.StreetTB.Text)) { args.IsValid = false; }
+
+            if (args.IsValid && !IsValidAscii(MailingAddressEdit.Street2TB.Text)) { args.IsValid = false; }
+
+            if (args.IsValid && !IsValidAscii(MailingAddressEdit.CityTB.Text)) { args.IsValid = false; }
+
+            if (args.IsValid && !IsValidAscii(MailingAddressEdit.ZipTB.Text)) { args.IsValid = false; }
+        }
+    }
+
+    protected bool IsValidAscii(string value)
+    {
+        bool isValid = true;
+
+        string pattern = "^[ -~]+$"; // one or more Ascii printable characters from space to tilde
+
+        if (!IsNull(value))
+        {
+            // HtmlDecode (called below) captures character references, i.e. &lt; or &#60;
+
+            if (!Regex.IsMatch(Server.HtmlDecode(value), pattern))
+            {
+                isValid = false;
+            }
+        }
+
+        return isValid;
+    }
+
+    protected void FullNameCustomValidator_ServerValidate(object source, ServerValidateEventArgs args)
+    {
+        args.IsValid = true;
+        int maxFullNameLength = 50; // usr.Name
+
+        string fullName = BuildFullName();
+
+        if (fullName.Length > maxFullNameLength)
+        {
+            FullNameCustomValidator.ErrorMessage = string.Format("Full name is {0} characters. It must be less than {1} characters", fullName.Length, maxFullNameLength);
+            args.IsValid = false;
+        }
+    }
+
+    protected string BuildFullName()
+    {
+        StringBuilder sb = new StringBuilder();
+
+        if (NamePrefixDD.SelectedValue.ToString().Length > 0)
+        {
+            sb.Append(NamePrefixDD.SelectedValue.ToString());
+        }
+
+        sb.Append(" " + FirstNameTB.Text.Trim());
+
+        if (MiddleNameTB.Text.Length > 0)
+        {
+            sb.Append(" " + MiddleNameTB.Text.Trim());
+        }
+
+        sb.Append(" " + LastNameTB.Text.Trim());
+
+        if (NameSuffixDD.SelectedValue.ToString().Length > 0)
+        {
+            sb.Append(" " + NameSuffixDD.SelectedValue.ToString());
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private void SaveIndividual()
+    {
+        Individual individual = new Individual(ConnectionName);
+        bool loaded = false;
+        if (uid > 0)
+        {
+            loaded = individual.Load(uid, SelectedSiteID);
+        }
+        if (!loaded)
+        {
+            individual.AddNew();
+            individual.RowGuid = ItemGuid;
+        }
+        individual.SiteID = SiteID;
+        individual.Prefix = NamePrefixDD.SelectedValue.ToString();
+        individual.FirstName = FirstNameTB.Text.Trim();
+        individual.MiddleName = MiddleNameTB.Text.Trim();
+        individual.LastName = LastNameTB.Text.Trim();
+        individual.Suffix = NameSuffixDD.SelectedValue.ToString();
+
+        individual.Name = BuildFullName();
+
+        FullName = individual.Name; // Used by lookup
+
+        if(LastSSNPanel.Visible)
+        {
+            individual.LastSSN = GetNullInt(LastSSNTB.Text);
+        }
+
+        if (JobTitlePanel.Visible == true)
+        {
+            if (!IsNull(individual.Company) && !IsNull(CompanyTB.Text) && !ICompare(individual.Company, CompanyTB.Text.Trim()))
+            {
+                // if the company name has changed, redirect to the add organization page after saving.
+                addOrganization = true;
+            }
+            individual.Company = CompanyTB.Text;
+            individual.JobTitle = JobTitleTB.Text;
+        }
+
+        if (individual.MailingAddressLine1 != MailingAddressEdit.StreetTB.Text.Trim() ||
+        individual.MailingAddressCity != MailingAddressEdit.CityTB.Text.Trim() ||
+        individual.MailingAddressState != MailingAddressEdit.StateAbbreviation.Trim() ||
+        individual.MailingAddressZip != MailingAddressEdit.ZipTB.Text.Trim())
+        {
+            individual.MailingAddressGeoCodeStatus = 1; //Ready to Geocode (Approved)
+            individual.MailingAddressLatitude = null;
+            individual.MailingAddressLongitude = null;
+            individual.MailingAddressGeoCodeAccuracy = null;
+        }
+
+        individual.MailingAddressLine1 = MailingAddressEdit.StreetTB.Text.Trim();
+        individual.MailingAddressLine2 = MailingAddressEdit.Street2TB.Text.Trim();
+        individual.MailingAddressCity = MailingAddressEdit.CityTB.Text.Trim();
+        individual.MailingAddressState = MailingAddressEdit.StateAbbreviation.Trim();
+        individual.MailingAddressZip = MailingAddressEdit.ZipTB.Text.Trim();
+        if (MailingAddressEdit.DisplayCountyDropDown)
+        {
+            individual.MailingAddressCountyID = GetNullInt(MailingAddressEdit.CountyID);
+        }
+
+
+        individual.Thumbnail = ThumbTB.Text;
+        individual.Image = ImageTB.Text;
+
+        // allow admin users to save notes about users
+        if (UserAccess >= 9)
+        {
+            individual.Notes = NotesTB.Text;
+        }
+        if (UserAccess >= 4 && displayBiography == true)
+        {
+            individual.Summary = SummaryTB.Text;
+            individual.ItemBody = BiographyTB.Text;
+            individual.ItemBreaks = true;
+        }
+        if (HowToReceivePanel.Visible)
+        {
+            // TO DO - Add individual.SiteEmailPreference to update Settings.EmailPreference.  Get approval for funding from EE.
+            // Temporarily here (since this does not create a new Settings row)
+            ExecuteNonQuery("UPDATE Settings SET EmailPreference = " + GetByte(EmailPreferenceRBL.SelectedValue) + " WHERE UID = " + uid + " AND SiteID = " + SiteID);
+        }
+
+        individual.EmailPreference = GetByte(EmailPreferenceRBL.SelectedValue);
+        if (ViaPostalMailCB.Checked)
+        {
+            individual.PostalMailPreference = 6;
+        }
+        else
+        {
+            individual.PostalMailPreference = 1;
+        }
+
+        // Build a list of the textbox email addresses.
+        List<string> currentUserEmails = new List<string>();
+        for (int i = 1; i <= 3; i++)
+        {
+            TextBox emailTB = (TextBox)EmailEditPanel.FindControl("EmailTB" + i);
+            if (emailTB != null)
+            {
+                string emailAddress = emailTB.Text.Trim();
+
+                if (!IsNull(emailAddress))
+                {
+                    currentUserEmails.Add(emailAddress);
+                }
+            }
+            else
+            {
+                throw new Exception("Cannot find email controls");
+            }
+        }
+
+        // Decide whether we need to update the emails or not.
+        bool updateEmails = false;
+        if (SelectedUserEmails.Count != currentUserEmails.Count)
+        {
+            updateEmails = true; // The initial count of emails is different from the current count. Save the emails.
+        }
+        else
+        {
+            for (int i = 0; i < SelectedUserEmails.Count; i++)
+            {
+                if (SelectedUserEmails[i] != currentUserEmails[i])
+                {
+                    updateEmails = true; // User updated one or more emails
+                    break; // no need to keep going
+                }
+            }
+        }
+
+        if (updateEmails)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                string emailAddress = string.Empty;
+                if (i < currentUserEmails.Count)
+                {
+                    emailAddress = currentUserEmails[i];
+                }
+
+                Email email = null;
+                if (i > individual.Emails.Count - 1 && i >= 1) // Email1 is already created so start with Email2
+                {
+                    email = individual.Emails.AddNew();
+                }
+                else
+                {
+                    email = individual.Emails[i]; // 0-based index
+                }
+
+                email.Email = emailAddress; // email is deleted if email field cleared.
+            }
+        }
+
+        if (SendWelcomeCB.Checked)
+        {
+            individual.ModifierUserState = UserState;
+            individual.Website = Website;
+            individual.MemberLogonUrl = "http://" + SiteDomain + GetShortLink("/net/member/signin.aspx", 0);
+            individual.MemberPasswordReminderUrl = "http://" + SiteDomain + GetShortLink("/net/member/reminder.aspx", 0);
+            individual.MemberUnsubscribeUrl = "http://" + SiteDomain + GetLink("/net/member/unsubscribe.aspx", 0);
+            individual.SendWelcomeEmail = true;
+        }
+        else
+        {
+            individual.SendWelcomeEmail = false;
+
+            if (UserID > 0)
+            {
+                individual.Modifier = UserID; // Also used for Item.Creator
+            }
+            else
+            {
+                individual.Modifier = 0; // 0 will cause Item.Creator to be set to new uid.
+            }
+        }
+
+        bool copyLogonRecord = false; // Used when user from other site is selected, or user is not yet associated to current site.
+        int copyLogonFromSiteID = 0;
+
+        if (uid > 0)
+        {
+            // Now always checking to assure user is related to site.
+            // Originally just for when user selected from other site, but also linking from Account.aspx to associate members to different websites.
+
+            // See if we need to add this user to the site or not.
+            // Do the select before writing anything so as to avoid timeouts.
+            int count = GetInt(ExecuteScalar("SELECT count(*) from logon WHERE Logon.ItemID = " + uid + " AND logon.siteid = " + SiteID));
+            if (count == 0)
+            {
+                if (SelectedSiteID != SiteID)
+                {
+                    copyLogonFromSiteID = SelectedSiteID;
+                }
+                else
+                {
+                    // Get the SiteID with the highest logon access level
+                    copyLogonFromSiteID = GetInt(ExecuteScalar("SELECT Top 1 SiteID from logon WHERE Logon.ItemID = " + uid + " ORDER BY Logon.Access Desc"));
+                }
+                copyLogonRecord = true;
+            }
+        }
+
+        if (uid <= 0 || (IsNull(individual.UserName) && !copyLogonRecord))
+        {
+            // Create logon if new user or for some reason no logon exists and we're not copying a logon record
+            if (UserNamePasswordPanel.Visible == false)
+            {
+                // Create the username and password automatically
+                individual.UserName = FirstNameTB.Text.Trim()[0] + LastNameTB.Text.Trim();
+                individual.UserName = individual.UserName.Replace("'", "");
+            }
+            else
+            {
+                individual.UserName = UsernameTB.Text.Trim();
+                individual.Password = PasswordTB.Text.Trim();
+            }
+        }
+        else if (copyLogonRecord)
+        {
+            individual.CreateUniqueLogon = false;   // not needed, but turn off just to be sure.
+            individual.CopyLogonFromSiteID = copyLogonFromSiteID;
+        }
+
+        UpdatePhoneNumbers(ref individual);
+
+        if (uid <= 0) // New user
+        {
+            individual.UserAccess = 1;
+            if (IsSite("GeorgiaTourism") && orgID == 38121)
+            {
+                individual.UserAccess = 4;
+            }
+        }
+
+        if (SiteAccessPanel.Visible == true && GetShort(SiteAccessDD.SelectedValue) > 0)
+        {
+            // use the site access selected by the user
+            individual.UserAccess = GetShort(SiteAccessDD.SelectedValue);
+        }
+
+        // Save Individual
+        individual.Save();
+
+        uid = individual.UserID;
+
+        PopulateUrl();
+
+        if (uid == UserID || !UserState.Authenticated)
+        {
+            // Always log the user out (whether logged in or not) and log back in to update the Userstate
+            ClearUserState();
+            SqlConnection conn = CreateConnection();
+            conn.Open();
+            UserState.Logon(SiteID, SiteGroup, individual.UserName, individual.Password, true, Response.Cookies, conn);
+            conn.Close();
+        }
+    }
+
+        //private void SaveUser(string userName, string password)
+        //{
+        //    // Deprecated. This logic is implemented in SaveIndividual.
+        //    return;
+
+        //    if(!Page.IsValid) return;
+
+        //    bool insertNewUserInfo = false;
+        //    if (newItemRecalledFromGuid)
+        //    { // Check to see if user record has been created yet for new item.
+        //        if (GetInt(ExecuteScalar("SELECT Usr.uid FROM Usr WHERE Usr.uid = " + uid)) <= 0)
+        //        {
+        //            insertNewUserInfo = true;
+        //        }
+        //    }
+        //    bool copyLogonRecord = false; // Used when user from other site is selected, or user is not yet associated to current site.
+        //    bool insertSiteItemRecord = false;
+        //    bool logonInserted = false;
+
+        //    //UserDO user = new UserDO();
+        //    Individual user = new Individual();
+			
+        //    if (testing) Write("ItemGuid: " + ItemGuid + "<br />");
+        //    if (testing) Write("uid: " + uid + "<br />");
+        //    if (uid > 0)
+        //    {
+        //        //user.UserID = uid;
+        //        if (!insertNewUserInfo)
+        //        {
+        //            user.Load(uid);
+        //            //BUGBUG I commented this out is user.new needed?
+        //            //user.New = false; // Prevents insert of location in PreSave
+        //        } 
+        //        else 
+        //        {
+        //            user.CreateDate = DateTime.Now;
+        //            //user.New = true;
+        //            //user.Creator = UserID;
+        //            //newUser =true;
+        //        }
+				
+        //        //Commented this out because now always checking to assure user is related to site.
+        //        //Originally just for when user selected from other site, but also linking from Account.aspx to associate members to different websites.
+				
+        //            // See if we need to add this user to the site or not.
+        //            // Do the select before writing anything so as to avoid timeouts.
+        //            int count = GetInt(ExecuteScalar("SELECT count(*) from logon WHERE Logon.ItemID = " + uid + " AND logon.siteid = " + SiteID));
+        //            if(count == 0)
+        //            {
+        //                if(SelectedSiteID != SiteID)
+        //                {
+        //                    copyLogonFromSiteID = SelectedSiteID;
+        //                } 
+        //                else 
+        //                {
+        //                    copyLogonFromSiteID = GetInt(ExecuteScalar("SELECT Top 1 SiteID from logon WHERE Logon.ItemID = " + uid + " ORDER BY Logon.Access Desc"));
+        //                }
+        //                copyLogonRecord = true;
+        //            }
+				
+
+        //        int siteItemCount = GetInt(ExecuteScalar("SELECT count(*) from site_item WHERE site_item.itemid = " + uid + " AND Site_Item.SiteID = " + SiteID));
+        //        if(siteItemCount == 0)
+        //        {
+        //            insertSiteItemRecord = true;
+        //        }
+
+        //        // Get Username and Password for notification email.
+        //        string sql = string.Format("SELECT logon.u, logon.p FROM logon WHERE Logon.ItemID = {0} AND logon.siteid = {1}", uid, SelectedSiteID != SiteID ? SelectedSiteID : SiteID);
+        //        SqlDataReader reader = ExecuteReader(sql);
+        //        if(reader.Read())
+        //        {
+        //            UsernameTB.Text = GetString(reader["u"]);
+        //            PasswordTB.Text = GetString(reader["p"]);
+        //        }
+        //        reader.Close();
+        //    }
+        //    else
+        //    {
+        //        //BUGBUG - commented out during conversion to ms
+        //        //user.ItemTable.RowGuid = ItemGuid;
+        //    }
+
+        //    //user.TypeID = 60000; // Different individual types could be set here.  Defaults to 60000
+        //    user.SiteID = SiteID;
+
+        //    user.Prefix = NamePrefixDD.SelectedValue.ToString();
+        //    user.FirstName = FirstNameTB.Text;
+        //    user.MiddleName = MiddleNameTB.Text;
+        //    user.LastName = LastNameTB.Text;
+        //    user.Suffix = NameSuffixDD.SelectedValue.ToString();
+        //    if(JobTitlePanel.Visible == true)
+        //    {
+        //        user.Company = CompanyTB.Text;
+        //        user.JobTitle = JobTitleTB.Text;
+        //    }
+				
+        //    user.Name = user.FirstName + " " + user.LastName;
+        //    FullName = user.Name; // Used by lookup
+        //    if (UserID > 0) 
+        //    {
+        //        user.Modifier = UserID; // Also used for Item.Creator
+        //    } 
+        //    else 
+        //    {
+        //        user.Modifier = 0; // 0 will cause Item.Creator to be set to new uid.
+        //    }
+
+        //    user.EmailPreference = GetByte(EmailPreferenceRBL.SelectedValue);
+        //    if (ViaPostalMailCB.Checked)
+        //    {
+        //        user.PostalMailPreference = 6;
+        //    }
+        //    else
+        //    {
+        //        user.PostalMailPreference = 1;
+        //    }
+
+        //    SqlConnection conn = null;
+        //    SqlTransaction trans = null;
+
+
+        //    try
+        //    {
+        //        conn = CreateConnection();
+        //        conn.Open();
+        //        trans = conn.BeginTransaction();
+
+        //        //user.Save(trans);
+        //        user.Save();
+
+        //        //bw bugbugSavePhoneNumbers(user, trans);
+        //        //SavePhoneNumbers(uid);
+
+        //        if(uid > 0)
+        //        {
+        //            if(EmailEditPanel.Visible == true)
+        //            {
+        //                if(IsNull(EmailTB1.Text.Trim()))
+        //                {
+        //                    //BUGBUG - commented out during conversion to ms
+        //                    //user.DeleteEmail(trans);
+        //                }
+        //                else
+        //                {
+        //                    //BUGBUG - commented out during conversion to ms
+        //                    //user.UpdateEmail(trans, EmailTB1.Text.Trim());
+        //                }
+        //            }
+				
+        //            if(insertSiteItemRecord == true)
+        //            {
+        //                //BUGBUG - commented out during conversion to ms
+        //                //InsertSiteItem(trans, user.ItemTable);
+        //            }
+        //        }
+        //        if (uid <= 0 || insertNewUserInfo) // New user
+        //        {
+        //            int siteAccess = 1;
+        //            if(IsSite("GeorgiaTourism") && orgID == 38121)
+        //            {
+        //                siteAccess = 4;
+        //            }
+        //            if (SiteAccessPanel.Visible == true)
+        //            {  // use the site access selected by the user
+        //                siteAccess = GetInt(SiteAccessDD.SelectedValue);
+        //            }
+
+        //            uid = user.UserID;
+
+        //            //InsertSiteItem(trans, user.ItemTable); // Copied here 4/19/2006
+
+        //            PopulateUrl(); // Newly found uid is used in redirect link.
+					
+        //            SelectedUserEmail = EmailTB1.Text.Trim();
+        //            if(!IsNull(SelectedUserEmail))
+        //            {
+        //                //BUGBUG - commented out during conversion to ms
+        //                //user.CreateEmail(trans, EmailTB1.Text.Trim(), SiteID);
+        //                if (uid == UserID)
+        //                {
+        //                    // Don or Barb - need to set this here.
+        //                    //UserState.Email = EmailTB1.Text.Trim();
+        //                }
+        //            }
+					
+        //            if(UserNamePasswordPanel.Visible == false)
+        //            {
+        //                // Create the username and password automatically
+        //                userName = FirstNameTB.Text.Trim()[0] + LastNameTB.Text.Trim();
+        //                userName = userName.Replace("'", "");
+        //                password = string.Empty;
+        //                //BUGBUG - commented out during conversion to ms
+        //                //user.GetUniqueLogon(trans, ref userName, SiteID, out password);
+        //                //user.CreateLogon(trans, userName, password, siteAccess, SiteID);
+        //                UsernameTB.Text = userName;
+        //                PasswordTB.Text = password;
+        //                logonInserted = true;
+        //            }
+        //            else
+        //            {
+        //                //BUGBUG - commented out during conversion to ms
+        //                //user.CreateLogon(trans, UsernameTB.Text.Trim(), PasswordTB.Text.Trim(), siteAccess, SiteID);
+        //                logonInserted = true;
+        //            }
+        //        }
+
+
+        //        //int PhysicalAddressID = 0;
+        //        //user.CreateUserItem(trans, user.Id, user.Name, MailingAddressID, PhysicalAddressID, SiteID, GetInt(userId));				
+
+        //        if (SiteAccessPanel.Visible == true && !logonInserted)
+        //        {
+        //            // if a logon exists for this user, update its access.  Otherwise, create a logon.
+					
+        //            if (logonCount >= 1)
+        //            {
+        //                ExecuteNonQuery("UPDATE logon SET access = " + SiteAccessDD.SelectedValue +	" WHERE Logon.ItemID = '" + user.UserID + "' AND logon.SiteID = " + SiteID,trans);  
+        //            }
+        //            else
+        //            {	// create new logon
+        //                if(UserNamePasswordPanel.Visible == false)
+        //                {
+        //                    // Create the username and password automatically
+        //                    // FROM HERE
+        //                    //BUGBUG - commented out during conversion to ms
+        //                    //user.CreateLogon(trans, userName, password, GetInt(SiteAccessDD.SelectedValue), SiteID);
+        //                    UsernameTB.Text = userName;
+        //                    PasswordTB.Text = password;
+        //                }
+        //                else
+        //                {
+        //                    //BUGBUG - commented out during conversion to ms
+        //                    //user.CreateLogon(trans, UsernameTB.Text.Trim(), PasswordTB.Text.Trim(), GetInt(SiteAccessDD.SelectedValue), SiteID);
+        //                }
+        //            }
+        //        }
+
+        //        trans.Commit();
+
+        //        if(!UserState.Authenticated)
+        //        {
+        //            ClearUserState();
+        //            conn = CreateConnection();
+        //            conn.Open();
+        //            UserState.Logon(SiteID, SiteGroup, UsernameTB.Text.Trim(), PasswordTB.Text.Trim(), true, Response.Cookies, conn);
+        //            conn.Close();
+        //        }
+        //    }
+        //    catch(Exception ex)
+        //    {
+        //        if(trans != null)
+        //        {
+        //            trans.Rollback();
+        //        }
+        //        throw new Exception(ex.Message, ex);
+        //    }
+        //    finally
+        //    {
+        //        if(conn != null)
+        //        {
+        //            conn.Close();
+        //        }
+        //    }
+        //    // Placing this outside of transaction prevented error that occured when copying user from another website.
+        //    if(copyLogonRecord == true)
+        //    {
+        //        //BUGBUG - commented out during conversion to ms
+        //        //CopyLogon(user.ItemTable, copyLogonFromSiteID);
+        //    }
+        //}
+
+		private void SaveNotification()
+		{
+			Notification notify = new Notification();
+			notify.es.Connection.Name = ConnectionName;
+            notify.AddNew();
+
+            notify.RecipientID = ItemID; // Who the user is contacting. This will be used for the From address when responding to the user.
+
+            notify.SenderID = uid; 	
+
+            if (GetInt(RequestDD.SelectedValue) > 0)
+            {
+                notify.MessageID = GetInt(RequestDD.SelectedValue);
+            }
+            else
+            {
+                notify.MessageID = 0; // Required
+            }
+            notify.RequestSubject = SubjectTB.Text;
+            notify.RequestText = MessageBodyTB.Text;
+            notify.DatePosted = DateTime.Now;
+            notify.DateScheduled = notify.DatePosted.Value.Date.AddDays(1).AddHours(9).AddMinutes(30);
+            notify.SiteID = SiteID;
+            notify.Save();
+		}
+
+        //private void SendWelcomeEmail()
+        //{
+        //    // Deprecated. This logic is implemented within the Individual object.
+        //    return;
+
+        //    string body = string.Empty;
+        //    if (IsSite("GeorgiaGolf"))
+        //    {
+        //        // Line returns are mysteriously not working in email.  - LH 4/19/2006
+        //        if ((Action == "addself") || (Action == "updateself"))
+        //        {
+        //            body = "Thanks for becoming a member of GeorgiaGolf.com, your link to the state park golf courses.  You�re now eligible for all future drawings for a month of free golf.";
+        //        }
+        //        else
+        //        {
+        //            body = "Thanks for registering at one of the Georgia State Park Golf Courses.  You�re now eligible for all future drawings for a month of free golf.  An online golf member account has been activated for you within GeorgiaGolf.com, your link to the state park golf courses.";
+        //        }
+        //        body += " As a registered website member you receive special discounts and benefits. They include:\r\n\r\n";
+        //        body += "- Seasonal coupons from state park golf courses posted online\r\n";
+        //        //body += "- Free round of golf for your birthday each year (a postcard will be mailed to you at the end of the month prior to your birthday month. You must be registered by the 20th of the month prior to your birthday month to receive mailed card for the first year) \r\n";
+        //        //body += "- The ability to make Tee Times online \r\n";
+        //        body += "- Golf Links E-newsletter featuring special events and promotions at your Georgia State Park Golf Courses.\r\n\r\n";
+        //        //body += "Please keep a copy of this email for future reference.\r\n\r\n";
+
+        //        //body += "You may print the following coupons for new members.\r\n";
+        //        //body += "These will only be online for one day, so do not delay printing.\r\n\r\n";
+
+        //        //body += "http://GeorgiaGolf.com/net/go/GeorgiaGolfWelcome.aspx?s=0.0.2.17\r\n\r\n";
+
+        //        body += "You may update your user settings at any time, including changing your username and password.\r\n";
+        //        body += "A logon reminder may also be requested online.\r\n\r\n";
+
+        //        body += "Username: " + UsernameTB.Text + "\r\n";
+        //        body += "Password: " + PasswordTB.Text + "\r\n\r\n";
+				
+        //        body += "Do not reply to this email. If you have additional questions, please use the Contact Us link at www.GeorgiaGolf.com. \r\n\r\n\r\n";
+        //        body += "Great Golfing! \r\n";
+        //        body += "Your Friends at Georgia State Park Golf\r\n";
+        //    }
+        //    else
+        //    {
+        //        body += "Welcome " + FirstNameTB.Text + ",\r\n\r\n";
+        //        body += "An account has been created for you";
+        //        if (uid != UserID)
+        //        {
+        //            body += " by " + UserState.Name;
+        //        }
+        //        if(orgID > 0)
+        //        {
+        //            body += " as part of the " + GroupTitleLabel.Text + " group";
+        //        }
+        //        body += " within the " + SiteTitle + " website.\r\n\r\n";
+        //        body += Host + GetShortLink("/net/member/signin.aspx", 0) + "\r\n\r\n";
+        //        body += "You may use the following to access and update your account.\r\n\r\n";
+        //        body += "Username: " + UsernameTB.Text + "\r\n\r\n";
+        //        if (uid != UserID) // Omit when user adds self for greater security.
+        //        {
+        //            body += "Password: " + PasswordTB.Text + "\r\n\r\n";
+        //        }
+        //        else
+        //        {
+        //            body += "A password may be requested online using the following link:\r\n";
+        //            body += Host + GetShortLink("/net/member/reminder.aspx", 0) + "\r\n\r\n";
+        //        }
+
+        //        int welcomeMessageID = 0;
+        //        if (IsSite("gppn") && ConnectionName.ToLower() == "system") welcomeMessageID = 54748;
+        //        if (welcomeMessageID > 0)
+        //        {
+        //            string sql = "SELECT Item.Body FROM Item WHERE Item.ItemID = " + welcomeMessageID;
+        //            SqlDataReader reader = ExecuteReader(sql);
+        //            if (reader.Read())
+        //            {
+        //                body += GetString(reader["Body"]).Replace("<br>", "\n").Replace("<BR>", "\n").Replace("<br/>", "\n").Replace("<br />", "\n").Replace("<BR/>", "\n").Replace("<BR />", "\n");
+        //            }
+        //            reader.Close();
+        //        }
+        //    }
+        //    DSMailMessage email = new DSMailMessage();
+	
+        //    email.Subject = "Welcome, " + FirstNameTB.Text + " " + LastNameTB.Text + "!";
+        //    email.Body = body;
+        //    if ((Action == "addself") || (Action == "updateself"))
+        //    {
+        //        email.SetFrom(SiteContactEmail, SiteContactName);
+        //    }
+        //    else if (!IsNull(UserState.Email))
+        //    {
+        //        email.SetFrom(UserState.Email, UserState.Name);
+        //    }
+        //    else if (!IsNull(EmailTB1.Text))
+        //    {
+        //        email.SetFrom(EmailTB1.Text, UserState.Name);
+        //    }
+        //    else if (!IsNull(UserState.Name))
+        //    {
+        //        email.SetFrom(SiteContactEmail, "No email: " + UserState.Name);
+        //    } 
+        //    else 
+        //    {
+        //        email.SetFrom(SiteContactEmail, "Unregistered User");
+        //    }
+
+        //    if (IsSite("GeorgiaGolf"))
+        //    {
+        //        email.SetFrom("yourfriends@gastateparkgolf.com", "Georgia State Park Golf");
+        //    }
+        //    email.AddTo(EmailTB1.Text);
+        //    //email.BodyFormat = System.Web.Mail.MailFormat.Html; // Would need to use <br /> tags with this.
+        //    SendEmail(email);
+        //}
+		private void SendCorrespondence()
+		{
+			string body = string.Empty;
+			body = MessageBodyTB.Text;
+            if (IsSite("walker") && ItemID == 5316)
+            {
+                body += "\r\n" + "Amount: " + AmountTB.Text + " Estimated Total: " + EstimatedTotalTB.Text + "\r\n";
+            }
+            DSMailMessage email = new DSMailMessage();
+			email.Subject = SubjectTB.Text;
+
+			if (!IsNull(EmailTB1.Text))
+			{
+				if (!IsNull(UserState.Email) && UserState.Email.Trim() != EmailTB1.Text.Trim())
+				{
+					body = "Note: Reply to email differs from current user's email: " + UserState.Email + "\r\n\r\n" + body;
+				}
+				email.SetFrom(EmailTB1.Text, UserState.Name);
+			}
+			else if (!IsNull(UserState.Email))
+			{
+				email.SetFrom(UserState.Email, UserState.Name);
+			}
+			else if (!IsNull(UserState.Name))
+			{
+				email.SetFrom(SiteContactEmail, "No email: " + UserState.Name);
+			} 
+			else 
+			{
+				email.SetFrom(SiteContactEmail, "Unregistered User");
+			}
+			
+			email.Body = body + "\r\n";
+			if(contactUser)	// userid passed in
+			{
+				email.AddTo(ContactUserEmail);
+			}
+			else
+			{
+				email.AddTo(SiteContactEmail);
+
+			}
+			if (UserState.Email != EmailTB1.Text && !IsNull(EmailTB1.Text) && !contactUser)
+			{
+				email.Body += "Email: " + EmailTB1.Text + "\r\n";
+			}
+			SendEmail(email);
+		}
+
+     private void SendVolunteerStaffNotesNotification(string staffNotes)
+     {
+         // If updating this method, also update /parks/EditVolunteer.aspx
+
+         if (!Live || UserAccess >= 9 || UserID == 253365) // Rachael Rupe
+         {
+             return;
+         }
+
+         DSMailMessage email = new DSMailMessage();
+
+         email.Subject = "Staff notes updated for " + FirstNameTB.Text + " " + LastNameTB.Text;
+         StringBuilder sb = new StringBuilder();
+         sb.Append(staffNotes);
+
+         sb.Append("\r\n\r\nUser Account:\r\n");
+         sb.Append(GetUrl(Host + "/account/" + uid, 0));
+
+         sb.AppendFormat("\r\n\r\nPosted By: {0} on {1}\r\n", UserState.Name, DateTime.Now);
+
+         email.Body = sb.ToString();
+         if (!IsNull(UserState.Email))
+         {
+             email.SetFrom(UserState.Email, UserState.Name);
+         }
+         else if (!IsNull(UserState.Name))
+         {
+             email.SetFrom(SiteContactEmail, "No email: " + UserState.Name);
+         }
+         else
+         {
+             email.SetFrom(SiteContactEmail, "Unregistered User");
+         }
+
+         email.AddTo("Rachael.Rupe@dnr.ga.gov");
+
+         //email.BodyFormat = System.Web.Mail.MailFormat.Html; // Would need to use <br /> tags with this.
+         SendEmail(email);
+     }
+
+		private void InsertSiteContact(int contactRoleID)
+		{
+            // Might want to insert title other then "Administrator"
+			if(uid <= 0) return;
+			string sql = string.Format
+				("INSERT INTO siteContacts (SiteID, ContactRoleID, ContactRoleTitle, ID) values({0},{1},'{2}',{3})",
+                SiteID, contactRoleID, "Administrator", uid);
+			ExecuteNonQuery(sql);
+		}
+
+        private void CopyLogon(Item item, int fromLogonSiteID)
+        {
+            if (uid <= 0) return;
+            if (fromLogonSiteID <= 0) return;
+            string sql = string.Empty;
+        //sql = string.Format
+        //("INSERT INTO logon(SiteID, ItemID, U, P, Access, Cookie) SELECT '{0}', Logon.ItemID, logon.u, logon.p, logon.access, '{1}' FROM logon WHERE ItemID = {2} AND SiteID = {3}",
+        //SiteID, Guid.NewGuid().ToString(), uid, fromLogonSiteID);
+
+        sql = string.Format("SELECT '{0}' AS SiteID, Logon.ItemID, logon.u, {1} AS Password, logon.access, '{2}' AS Cookie FROM logon WHERE ItemID = {3} AND SiteID = {4}",
+            SiteID, EncryptionUtil.GetDecryptionPasswordClause(fromLogonSiteID), Guid.NewGuid().ToString(), uid, fromLogonSiteID);
+
+        int tmpSiteID = 0;
+        int tmpItemID = 0;
+        string tmpUserName = string.Empty;
+        string tmpPassword = string.Empty;
+        int tmpAccess = 0;
+        string tmpCookie = string.Empty;
+
+        SqlDataReader reader = ExecuteReader(sql);
+        if (reader.Read())
+        {
+            tmpSiteID = GetInt(reader["SiteID"]);
+            tmpItemID = GetInt(reader["ItemID"]);
+            tmpUserName = GetString(reader["u"]);
+            tmpPassword = GetString(reader["Password"]);
+            tmpAccess = GetInt(reader["Access"]);
+            tmpCookie = GetString(reader["Cookie"]);
+        }
+        reader.Close();
+
+        try
+        { // This will fail if the username is already used in the other site.
+          // The user themselves my be using the username with another account.
+            sql = string.Format("INSERT INTO logon (SiteID, ItemID, U, Password, Access, Cookie) VALUES ({0}, {1}, '{2}', {3}, {4}, '{5}')",
+                tmpSiteID, tmpItemID, tmpUserName, EncryptionUtil.GetEncryptionPasswordClause(tmpPassword, tmpSiteID), tmpAccess, tmpCookie);
+
+            ExecuteNonQuery(sql);
+            }
+            catch
+            {
+            }
+        }
+		private void UpdatePhoneNumbers(ref Individual individual)
+		{
+            // TODO: Change the primary key in the Phone table to be only the PhoneID.
+            // When that is done, update logic can be used. Switching the order of phone 
+            // numbers now causes an error.
+
+                //int priority = 1;
+            for (int i = 1; i <= NumPhoneFields; i++)
+            {
+                DropDownList phoneTypeDD = (DropDownList)PhonePH.FindControl("PhoneTypeDD" + i);
+                TextBox areaCodeTB = (TextBox)PhonePH.FindControl("AreaCodeTB" + i);
+                TextBox phoneTB = (TextBox)PhonePH.FindControl("PhoneTB" + i);
+                TextBox phoneExtTB = (TextBox)PhonePH.FindControl("PhoneExtTB" + i);
+                if (IsNull(phoneTypeDD) || IsNull(areaCodeTB) || IsNull(phoneTB) || IsNull(phoneExtTB))
+                {
+                    throw new Exception("Cannot find phone controls");
+                }
+
+                string areacode = areaCodeTB.Text;
+                string phone = phoneTB.Text;
+                string ext = phoneExtTB.Text;
+                PhoneUtil.GetFormattedPhone(ref areacode, ref phone, ref ext);
+                if (IsNull(ext))
+                {
+                    ext = null;
+                }
+
+                switch (i)
+                {
+                    case 1:
+                        individual.Phone1Areacode = areacode;
+                        individual.Phone1Number = phone;
+                        individual.Phone1Ext = ext;
+                        individual.Phone1Type = GetByte(phoneTypeDD.SelectedValue);
+                        break;
+
+                    case 2:
+                        individual.Phone2Areacode = areacode;
+                        individual.Phone2Number = phone;
+                        individual.Phone2Ext = ext;
+                        individual.Phone2Type = GetByte(phoneTypeDD.SelectedValue);
+                        break;
+
+                    case 3:
+                        individual.Phone3Areacode = areacode;
+                        individual.Phone3Number = phone;
+                        individual.Phone3Ext = ext;
+                        individual.Phone3Type = GetByte(phoneTypeDD.SelectedValue);
+                        break;
+
+                    case 4:
+                        individual.Phone4Areacode = areacode;
+                        individual.Phone4Number = phone;
+                        individual.Phone4Ext = ext;
+                        individual.Phone4Type = GetByte(phoneTypeDD.SelectedValue);
+                        break;
+
+                    case 5:
+                        individual.Phone5Areacode = areacode;
+                        individual.Phone5Number = phone;
+                        individual.Phone5Ext = ext;
+                        individual.Phone5Type = GetByte(phoneTypeDD.SelectedValue);
+                        break;
+
+                }
+            }
+		}
+
+		private void SaveFulfillmentUser()
+		{
+			string sql = "SELECT TempFulfillmentUserID FROM Item WHERE Item.ItemID = " + uid;
+
+			int fulfillmentUserID = GetInt(ExecuteScalar(sql));
+			bool newUser = true;
+
+			if(fulfillmentUserID >= 0)
+			{
+				newUser = false; // User has already been inserted into the fulfillment system
+			}
+			sql = string.Format("SELECT logon.u, {0} AS Password FROM LOGON WHERE Logon.ItemID = {1} AND Logon.SiteID = {2}",
+                EncryptionUtil.GetDecryptionPasswordClause(SiteID), uid, SiteID);
+			SqlDataReader reader = ExecuteReader(sql);
+			string username = string.Empty;
+			string password = string.Empty;
+			if(reader.Read())
+			{
+				username = GetString(reader["u"]);
+				password = GetString(reader["Password"]);
+			}
+			reader.Close();
+
+            if (!IContains(Host, "localhost"))
+            {
+                SqlConnection conn = new SqlConnection(FulfillmentConnString);
+                conn.Open();
+
+                //object[] objValues = new object[9];
+                //objValues[0] = username;
+                //objValues[1] = password;
+                //objValues[2] = FirstNameTB.Text.Replace("'", "''").Trim();
+                //objValues[3] = LastNameTB.Text.Replace("'", "''").Trim();
+                //objValues[4] = 1;	// Enabled
+                //objValues[5] = 100;	// SortOrder
+                //objValues[6] = DefaultSourceDD.SelectedValue;
+                //objValues[7] = EmailTB1.Text.Trim();
+                //objValues[8] = fulfillmentUserID;	// Only used in update
+
+                SqlCommand cmd = new SqlCommand();
+                cmd.Connection = conn;
+
+                if (newUser == true)
+                {
+                    // See if this login already exists in the fulfillment system.
+                    sql = "SELECT ID FROM objUser WHERE Login = @Login";
+
+                    SqlParameterCollection sqlParams = CreateParameters();
+                    sqlParams.AddWithValue("Login", username);
+
+                    cmd.CommandText = sql;
+                    fulfillmentUserID = GetInt(cmd.ExecuteScalar());
+
+                    if (fulfillmentUserID <= 0)
+                    {
+                        sql = "INSERT INTO objUser (Login, Password, FirstName, LastName, Enabled, SortOrder, DefaultSourceID, EmailAddress) VALUES (@Login, @Password, @FirstName, @LastName, @Enabled, @SortOrder, @DefaultSourceID, @EmailAddress)";
+                        sqlParams = CreateParameters();
+                        sqlParams.AddWithValue("Login", username);
+                        sqlParams.AddWithValue("Password", password);
+                        sqlParams.AddWithValue("FirstName", FirstNameTB.Text.Replace("'", "''").Trim());
+                        sqlParams.AddWithValue("LastName", LastNameTB.Text.Replace("'", "''").Trim());
+                        sqlParams.AddWithValue("Enabled", 1);
+                        sqlParams.AddWithValue("SortOrder", 100);
+                        sqlParams.AddWithValue("DefaultSourceID", DefaultSourceDD.SelectedValue);
+                        sqlParams.AddWithValue("EmailAddress", EmailTB1.Text.Trim());
+
+                        cmd.CommandText = sql;
+                        cmd.ExecuteNonQuery();
+                        cmd.CommandText = "Select ID FROM objUser WHERE ID = @@IDENTITY";
+                        fulfillmentUserID = GetInt(cmd.ExecuteScalar());
+                    }
+                    conn.Close();
+
+                    if (IsSite("GeorgiaTourism") && orgID == 38121)
+                    {
+                        sql = string.Format("UPDATE Item SET TempFulfillmentUserID = {0} WHERE Item.ItemID = {1}", fulfillmentUserID, uid);
+                        ExecuteNonQuery(sql);
+                    }
+                }
+                else
+                {
+                    sql = "UPDATE objUser SET Login = @Login, Password = @Password, FirstName = @FirstName, LastName = @LastName, Enabled = @Enabled, SortOrder = @SortOrder, DefaultSourceID = @DefaultSourceID, EmailAddress = @EmailAddress WHERE ID = @fulfillmentUserID";
+                    SqlParameterCollection sqlParams = CreateParameters();
+                    sqlParams.AddWithValue("Login", username);
+                    sqlParams.AddWithValue("Password", password);
+                    sqlParams.AddWithValue("FirstName", FirstNameTB.Text.Replace("'", "''").Trim());
+                    sqlParams.AddWithValue("LastName", LastNameTB.Text.Replace("'", "''").Trim());
+                    sqlParams.AddWithValue("Enabled", 1);
+                    sqlParams.AddWithValue("SortOrder", 100);
+                    sqlParams.AddWithValue("DefaultSourceID", DefaultSourceDD.SelectedValue);
+                    sqlParams.AddWithValue("EmailAddress", EmailTB1.Text.Trim());
+                    sqlParams.AddWithValue("fulfillmentUserID", fulfillmentUserID);
+                    cmd.CommandText = sql;
+                    cmd.ExecuteNonQuery();
+                    conn.Close();
+                }
+            }
+		}
+
+		private void LoadRelation(int parentID, int uid)
+		{
+			if (parentID <= 0) return;
+			if (uid <= 0) return;
+
+			relationID = GetRequestInt("relationid");
+		
+            int initialStatus = 0;
+
+            if (relationID > 0) // There may be cases where we want this with no relationID passed in.
+            {
+                string sql = "";
+
+                sql = "SELECT TOP 1 Relation.Status, Relation.RelationID, Relation.StartDate, Relation.EndDate, Relation.ServiceStartDate, Relation.ServiceEndDate FROM Relation WHERE ChildID = " + uid + " AND ParentID = " + parentID;
+
+                sql += " AND Relation.RelationID = " + relationID;
+
+
+                SqlDataReader reader = ExecuteReader(sql);
+                if (testing) Write("relationID of " + relationID + " from this query:<br /><br />" + sql + "<br /><br />");
+                if (reader.HasRows)
+                {
+                    while (reader.Read())
+                    {
+                        relationID = GetInt(reader["RelationID"]);
+                        initialStatus = GetInt(reader["Status"]);
+
+                        MemberStartDateTB.Text = GetString(reader["StartDate"]);
+                        MemberEndDateTB.Text = GetString(reader["EndDate"]);
+                        if (!IsNull(reader["ServiceStartDate"]) && !IsNull(reader["ServiceEndDate"]))
+                        {
+                            MemberDatesMessage.Text = "Purchased: " + GetDateTime(reader["ServiceStartDate"]).ToShortDateString() + " to " + GetDateTime(reader["ServiceEndDate"]).ToShortDateString() + "<br />";
+                        }
+                        else if (!IsNull(reader["ServiceStartDate"]))
+                        {
+                            MemberDatesMessage.Text = "Purchase start: " + GetDateTime(reader["ServiceStartDate"]).ToShortDateString() + "<br />";
+                        }
+                        else if (!IsNull(reader["ServiceEndDate"]))
+                        {
+                            MemberDatesMessage.Text = "Purchase end: " + GetDateTime(reader["ServiceEndDate"]).ToShortDateString() + "<br />";
+                        }
+                    }
+                }
+                reader.Close();
+            }
+            // initialStatus == 3 && 
+            if (UserAccess <= 5 && uid != UserID)
+            {
+                // This pre-existing account was associated to the group by a user with level 5 or below website access.
+                Session["message"] = "You do not have access to edit this account.  Please contact the individual to make updates.";
+                
+                Response.Redirect(GetUrl("/account/write/" + uid));
+            }
+
+            // See if expired Relation exists since no active found.
+            //if (relationID < 0)
+            //{
+            //    sql = "SELECT TOP 1 Relation.Status, Relation.RelationID, Relation.StartDate, Relation.EndDate, Relation.ServiceStartDate, Relation.ServiceEndDate FROM Relation WHERE ChildID = " + uid + " AND ParentID = " + parentID;
+            //    sql += " AND (Relation.EndDate < '" + DateTime.Now + "') ORDER BY Relation.StartDate DESC";
+            //    SqlDataReader reader2 = ExecuteReader(sql);
+            //    if (reader2.HasRows)
+            //    {
+            //        while (reader2.Read())
+            //        {
+            //            expiredRelationID = GetInt(reader2["RelationID"]);
+            //            //MemberDatesMessage.Text = "Previous membership span: " + GetDateTime(reader2["StartDate"]).ToShortDateString() + " to " + GetDateTime(reader2["EndDate"]).ToShortDateString() + "<br />";
+            //            if (!IsNull(reader2["ServiceStartDate"]) && !IsNull(reader2["ServiceEndDate"]))
+            //            {
+            //                MemberDatesMessage.Text += "Purchased: " + GetDateTime(reader2["ServiceStartDate"]).ToShortDateString() + " to " + GetDateTime(reader2["ServiceEndDate"]).ToShortDateString() + "<br />";
+            //            }
+            //            else if (!IsNull(reader2["ServiceStartDate"]))
+            //            {
+            //                MemberDatesMessage.Text += "Purchase start: " + GetDateTime(reader2["ServiceStartDate"]).ToShortDateString() + "<br />";
+            //            }
+            //            else if (!IsNull(reader2["ServiceEndDate"]))
+            //            {
+            //                MemberDatesMessage.Text += "Purchase end: " + GetDateTime(reader2["ServiceEndDate"]).ToShortDateString() + "<br />";
+            //            }
+            //            //initialStatus = GetInt(reader2["Status"]);
+
+            //            //MemberStartDateTB.Text = GetString(reader2["StartDate"]);
+            //            //MemberEndDateTB.Text = GetString(reader2["EndDate"]);
+            //        }
+            //    }
+            //    reader2.Close();
+            //}
+		}
+
+		private void CreatePhoneControls()
+		{
+			for(int i = 1; i <= NumPhoneFields; i++)
+			{
+				DropDownList phoneTypeDD = new DropDownList();
+				phoneTypeDD.ID = "PhoneTypeDD" + i;
+                phoneTypeDD.Attributes["aria-label"] = string.Format("Phone type %1", i);
+				
+				TextBox areaCodeTB = new TextBox();
+				areaCodeTB.ID = "AreaCodeTB" + i;
+				areaCodeTB.MaxLength = 3;
+				areaCodeTB.Width = 48;
+                areaCodeTB.Attributes["aria-label"] = string.Format("Area Code %1", i);
+
+				TextBox phoneTB = new TextBox();
+				phoneTB.ID = "PhoneTB" + i;
+				phoneTB.MaxLength = 24;
+				phoneTB.Width = 88;
+                phoneTB.Attributes["aria-label"] = string.Format("Phone Number %1", i);
+
+				TextBox phoneExtTB = new TextBox();
+				phoneExtTB.ID = "PhoneExtTB" + i;
+				phoneExtTB.MaxLength = 6;
+				phoneExtTB.Width = 60;
+                phoneExtTB.Attributes["aria-label"] = string.Format("Phone Extension %1", i);
+
+				Label phoneErrorLabel = new Label();
+				phoneErrorLabel.ID = "PhoneErrorLabel" + i;
+				phoneErrorLabel.Visible = false;
+                phoneErrorLabel.ForeColor = Color.Firebrick;
+
+				WritePhone("<table style='border:0px;'>");
+				WritePhone("<tr>");
+				WritePhone("<td>");
+				PhonePH.Controls.Add(phoneTypeDD);
+				WritePhone("</td>");
+				WritePhone("<td style='width:7px;'>&nbsp;</td>");
+				WritePhone("<td>");
+				WritePhone("<table style='border:0px;'>");
+				WritePhone("<tr>");
+				WritePhone("<td>");
+				PhonePH.Controls.Add(areaCodeTB);
+				WritePhone("</td>");
+				WritePhone("<td style='width:3px;'>&nbsp;</td>"); // See how this looks on other browsers
+				
+				//WritePhone("<td style='width:5px;'><img src='/core/elements/dots/clear.gif' style='height:1px; width:5px;'></td>");
+				WritePhone("<td>");
+				PhonePH.Controls.Add(phoneTB);
+				WritePhone("</td>");
+				WritePhone("<td style='width:5px;'><img src='/core/elements/dots/clear.gif' style='height:1px; width:5px;' alt=''></td>");
+				WritePhone("<td><SPAN class=smalltext>ext:</SPAN></td>");
+				WritePhone("<td style='width:2px;'><img src='/core/elements/dots/clear.gif' style='height:1px; width:2px;' alt=''></td>");
+				WritePhone("<td>");
+				PhonePH.Controls.Add(phoneExtTB);
+				WritePhone("</td>");
+				WritePhone("<td style='width:5px;'><img src='/core/elements/dots/clear.gif' style='height:1px; width:5px;' alt=''></td>");
+				WritePhone("<td>");
+				PhonePH.Controls.Add(phoneErrorLabel);
+				WritePhone("</td>");
+				WritePhone("</tr>");
+				WritePhone("</table>");
+				WritePhone("</td>");
+				WritePhone("</tr>");
+				WritePhone("</table>");
+			}
+		}
+
+		private void WritePhone(string html)
+		{
+			PhonePH.Controls.Add(new LiteralControl(html + "\r\n"));
+		}
+		private void WriteHtml(string html)
+		{
+			OutputPH.Controls.Add(new LiteralControl(html + "\r\n"));
+		}
+
+		private void EnableValidators()
+		{
+			FirstNameValidator.Enabled = false;
+			LastNameValidator.Enabled = false;
+			EmailValidator1.Enabled = false;
+			InvalidEmailValidator1.Enabled = false;
+			UsernameValidator.Enabled = false;
+			UsernameRegexValidator.Enabled = false;
+			PasswordValidator.Enabled = false;
+			PasswordRegexValidator.Enabled = false;
+			Password2Validator.Enabled = false;
+			Password2RegexValidator.Enabled = false;
+
+			if(UserInfoPanel.Visible == true)
+			{
+				FirstNameValidator.Enabled = true;
+				LastNameValidator.Enabled = true;
+				if(UserAccess < 8)
+				{
+					if (UserAccess <= 3 || uid == UserID) 
+					{
+						EmailValidator1.Enabled = true;
+					}
+				}
+
+                InvalidEmailValidator1.Enabled = true;
+
+				if(UserNamePasswordPanel.Visible == true)
+				{
+					UsernameValidator.Enabled = true;
+					UsernameRegexValidator.Enabled = true;
+					PasswordValidator.Enabled = true;
+					PasswordRegexValidator.Enabled = true;
+					Password2Validator.Enabled = true;
+					Password2RegexValidator.Enabled = true;
+				}
+			}
+		}
+		protected void SearchButton_Click(object sender, System.EventArgs e)
+		{
+            SearchEmailTB.Text = SearchEmailTB.Text.Trim();
+			if (IsNull(SearchLastNameTB.Text) && IsNull(SearchEmailTB.Text) && IsNull(SearchPhoneTB.Text) && IsNull(SiteOrderIDTB.Text) && IsNull(SearchGroupNameTB.Text))
+			{
+				// User needs to enter something
+                if(UserAccess < 4 && SearchFirstNameTB.Text.Length < 2)
+				{
+					Session["Message"] = "Please enter a last name, email address or phone number to search. Partial names and emails are okay.";
+					return;
+				}
+			}
+			string inSql = string.Empty;
+			string sql = string.Empty;
+
+			inSql = "SELECT DISTINCT usr.uid FROM Usr INNER JOIN site_item ON usr.uid = site_item.itemid";
+			if(!searchAllSites)
+			{
+				inSql += " AND site_item.SiteID = " + SiteID;
+			}
+			if(!IsNull(SearchEmailTB.Text.Trim()))
+			{
+				inSql += " LEFT JOIN email ON usr.uid = Email.ItemID";
+			}
+			//inSql += " LEFT JOIN address ON usr.uid = Address.ItemID";
+
+            SearchAreaCodeTB.Text = SearchAreaCodeTB.Text.Trim();
+            SearchPhoneTB.Text = SearchPhoneTB.Text.Trim();
+
+			if(!IsNull(SearchAreaCodeTB.Text) || !IsNull(SearchPhoneTB.Text))
+			{
+				inSql += " LEFT JOIN phone ON usr.uid = phone.ItemID";
+			}
+			if(!IsNull(SiteOrderIDTB.Text.Trim()))
+			{
+				inSql += " LEFT JOIN Invoice ON usr.uid = Invoice.BuyerID";
+			}
+			if(!IsNull(SearchGroupNameTB.Text.Trim()))
+			{
+				inSql += " LEFT JOIN Relation GroupRelation ON usr.uid = GroupRelation.ChildID";
+				inSql += " LEFT JOIN Item GroupItem ON GroupRelation.ParentID = GroupItem.ItemID AND GroupItem.BaseTypeID < 6";
+			}
+			inSql += " WHERE Site_Item.ItemStatus <= 7 AND (1=2";
+
+			if(!IsNull(SearchEmailTB.Text.Trim()))
+			{
+                inSql += " OR Email.Email = '" + SearchEmailTB.Text.Trim().Replace("'", "''") + "'";
+			}
+
+			if (SearchPhoneTB.Text.Length > 3 && !IContains(SearchPhoneTB.Text,"-"))
+			{ // Add Dash
+                SearchPhoneTB.Text = SearchPhoneTB.Text.Substring(0, 3) + "-" + SearchPhoneTB.Text.Substring(3);
+			}
+			
+            if(!IsNull(SearchAreaCodeTB.Text) && !IsNull(SearchPhoneTB.Text))
+			{
+				inSql += " OR (Phone.Areacode = '" + SearchAreaCodeTB.Text.Replace("'","") + "' AND Phone.Number = '" + SearchPhoneTB.Text.Replace(".","-").Replace("'","") + "')";
+			}
+			else if (!IsNull(SearchPhoneTB.Text))
+			{
+				inSql += " OR Phone.Number = '" + SearchPhoneTB.Text.Replace(".","-").Replace("'","") + "'";
+			}
+
+            if(!IsNull(SiteOrderIDTB.Text.Trim()))
+			{
+				inSql += " OR Invoice.SiteOrderID = " + SiteOrderIDTB.Text.Trim();
+			}
+			if(!IsNull(SearchGroupNameTB.Text.Trim()))
+			{
+				inSql += " OR GroupItem.Title LIKE '" + SearchGroupNameTB.Text.Trim().Replace("'", "''") + "%'";
+                inSql += " OR Usr.Company LIKE '" + SearchGroupNameTB.Text.Trim().Replace("'", "''") + "%'";
+            }
+			if(!IsNull(SearchLastNameTB.Text.Trim()))
+			{
+				if(!IsNull(SearchFirstNameTB.Text.Trim()))
+				{
+					inSql += " OR (Usr.lname LIKE '" + SearchLastNameTB.Text.Trim().Replace("'", "''") + "%' AND Usr.fname LIKE '" + SearchFirstNameTB.Text.Trim().Replace("'", "''") + "%')";
+				}
+				else
+				{
+					inSql += " OR (Usr.lname LIKE '" + SearchLastNameTB.Text.Trim().Replace("'", "''") + "%')";
+				}
+			}
+            else if (!IsNull(SearchFirstNameTB.Text.Trim()))
+            {
+                inSql += " OR (Usr.fname LIKE '" + SearchFirstNameTB.Text.Trim().Replace("'", "''") + "%')";
+            }
+            inSql += ")";
+				
+
+				//if (UserAccess >= 9) Write(inSql + "<br /><br />");
+
+				sql += "SELECT DISTINCT usr.uid, usr.fname, usr.mname, usr.lname, usr.prefix, usr.suffix, usr.createdate, usr.modifydate,";
+				sql += " ContactInfo.Email, ContactInfo.Phone1,";
+				sql += " ContactInfo.AddressLine1, ContactInfo.City, ContactInfo.State, ContactInfo.Zip, Site_Item.ItemStatus,";
+				if (orgID > 0)
+				{
+					sql += " Relation.ChildID, Relation.Access AS GroupAccessLevel, Relation.Status AS memberStatus, Relation.EndDate AS RelationEndDate,";
+				}
+				if(searchAllSites)
+				{
+                    sql += " Logon.Access AS AccessLevel, Logon.SiteID, Site.SiteTitle, Site.SiteDomain";
+				}
+				else
+				{
+					sql += " (SELECT TOP 1 Logon.Access FROM Logon WHERE Logon.ItemID = usr.uid AND Logon.SiteID = " + SiteID + " ORDER BY Logon.Access Desc) AS AccessLevel";
+				}
+				sql += " FROM usr JOIN Site_Item ON usr.uid = site_item.itemid AND Site_Item.ItemStatus <= 7";
+
+				if (orgID > 0)
+				{
+					sql += " LEFT JOIN Relation ON usr.uid = Relation.ChildID AND Relation.ParentID = " + orgID;
+				}
+				if(searchAllSites)
+				{
+					// Needed for SELECT of AccessLevel, etc. above
+					sql += " LEFT JOIN Logon ON Logon.ItemID = usr.uid";
+					sql += " LEFT JOIN Site ON Site.SiteID = Logon.SiteID";
+				}
+				sql += " JOIN ContactInfo ON usr.uid = ContactInfo.ItemID";
+
+                if (searchAllSites && SiteGroup.Length > 0)
+                {
+                    // 5/20/2009 LH Removed: AND SiteGroup.SiteID = " + SiteID + " 
+                    // Was limiting to current site only.
+                    sql += " JOIN SiteGroup ON Site_Item.SiteID = SiteGroup.SiteID";
+                    sql += " JOIN Site SiteParent ON SiteGroup.ParentSiteID = SiteParent.SiteID AND SiteParent.Site = '" + SiteGroup + "'";
+                }
+
+				sql += " WHERE Usr.Uid IN (" + inSql+ ")";
+
+                if (!searchAllSites)
+                {
+                    sql += " AND site_item.SiteID = " + SiteID;
+                }
+				if(searchAllSites)
+				{										 
+					sql += " ORDER BY Usr.lname, Usr.fname, Usr.uid, Logon.siteID, Usr.modifydate DESC";
+				}
+				else
+				{
+					sql += " ORDER BY Usr.lname, Usr.fname, Usr.uid, Usr.modifydate DESC";
+				}
+				//if (UserAccess >= 9) WriteHtml("<strong>Admin:</strong> " + sql);
+			
+
+			SearchPanel.Visible = false;
+
+			SqlDataReader reader = ExecuteReader(sql);
+
+			if(reader.HasRows)
+			{
+				string foundUid = string.Empty;
+				// foundUid is used to initialize the loop and force the first record to print - no need for a boolean flag.
+				int readerSiteID = 0;
+				bool displayRecord = false;
+                List<MemberSearchResult> memberSearchResults = new List<MemberSearchResult>();
+                StringBuilder sbMemberName = new StringBuilder();
+                StringBuilder sbGroupInfo = new StringBuilder();
+                StringBuilder sbMemberInfo = new StringBuilder();
+
+				while(reader.Read())
+				{
+                    sbMemberName.Clear();
+                    sbGroupInfo.Clear();
+                    sbMemberInfo.Clear();
+
+					displayRecord = false;
+					if(searchAllSites)
+					{
+						if(foundUid != GetString(reader["uid"]) || readerSiteID != GetInt(reader["siteID"]))
+						{
+							displayRecord = true;
+						}
+					}
+					else if(foundUid != GetString(reader["uid"]))
+					{
+						displayRecord = true;
+					}
+
+					if(displayRecord == true)
+					{
+						foundUid = GetString(reader["uid"]);
+						int accesslevel = GetInt(reader["accesslevel"]);
+						int groupaccesslevel = 0;
+						int memberStatus = 0;
+						if (orgID > 0)
+						{
+							groupaccesslevel = GetInt(reader["groupaccesslevel"]);
+							memberStatus = GetInt(reader["memberstatus"]);
+						}
+						int memberID = GetInt(reader["uid"]); // member of current group.
+						
+						string siteTitle = string.Empty;
+						readerSiteID = SiteID;
+						if(searchAllSites)
+						{
+							siteTitle = GetString(reader["sitetitle"]);
+							readerSiteID = GetInt(reader["siteID"]);
+						}
+						string prefix = GetString(reader["prefix"]);
+						string firstName = GetString(reader["fname"]);
+						string middleName = GetString(reader["mname"]);
+						string lastName = GetString(reader["lname"]);
+						string suffix = GetString(reader["suffix"]);
+						string email = GetString(reader["email"]);
+						string addressLine1 = GetString(reader["addressLine1"]);
+						string city = GetString(reader["city"]);
+						string state = GetString(reader["state"]);
+						string zip = GetString(reader["zip"]);
+						if(zip.Length > 5)
+						{
+							zip = zip.Substring(0, 5) + "-" + zip.Substring(5);
+						}
+						DateTime createDate = GetDateTime(reader["createdate"]);
+
+                        MemberSearchResult memberSearchResult = new MemberSearchResult();
+                        memberSearchResult.HiddenValue = foundUid + "," + GetString(readerSiteID);
+                        
+						if (prefix.Length > 0)
+						{
+                            sbMemberName.AppendFormat("{0} {1}", prefix, firstName);
+						} 
+						else
+						{
+                            sbMemberName.Append(firstName);
+						}	
+						if(!IsNull(middleName))
+						{
+                            sbMemberName.AppendFormat("&nbsp;{0}", middleName);
+						}
+						if (suffix.Length > 0)
+						{
+                            sbMemberName.AppendFormat("&nbsp;{0}, {1}", lastName, suffix);
+						} 
+						else 
+						{
+                            sbMemberName.AppendFormat("&nbsp;{0}", lastName);
+						}
+                        memberSearchResult.Name = sbMemberName.ToString();
+
+						if (orgID > 0 && GetInt(memberID) > 0 && memberStatus >= 0 /*&& memberStatus != 9 */)  // if status is 'deleted', then don't show as current member 
+						{
+                            if (memberStatus == 1)
+                            {
+                                sbGroupInfo.Append("&nbsp;(Current group member)");
+                            }
+                            else
+                            {
+                                DateTime relationEndDate = GetDateTime(reader["RelationEndDate"]);
+                                if (relationEndDate != NullDateTime)
+                                {
+                                    sbGroupInfo.AppendFormat("&nbsp;(Group member status: {0} as of {1}. Select to make Active.)", StatusText(memberStatus), relationEndDate.ToShortDateString());
+                                }
+                                else
+                                {
+                                    sbGroupInfo.AppendFormat("&nbsp;(Group member status: {0}. Select to make Active.)", StatusText(memberStatus));
+                                }
+                            }
+
+                            memberSearchResult.GroupInfo = sbGroupInfo.ToString();
+						}
+						if (GetRequestString("gosearch").Length > 0 && UserAccess >= 5)
+						{
+                            memberSearchResult.EditUrl = GetUrl("/net/member/join.aspx?uid=" + reader["uid"] + "&golast=" + Server.UrlEncode(GetRequestString("gosearch")));
+                            memberSearchResult.ShowEditUrl = true;
+						}
+
+                        if (((IsSiteType("Outdoor") && UserAccess >= 8) || (!IsSiteType("Outdoor") && UserAccess >= 5)) && !IsNull(addressLine1))
+                        {
+                            sbMemberInfo.AppendFormat("{0}<br />", addressLine1);
+						}
+                        if (((IsSiteType("Outdoor") && UserAccess >= 8) || !IsSiteType("Outdoor")) && (!IsNull(city) || !IsNull(state) || !IsNull(zip)))
+                        {
+							if(!IsNull(city))
+							{
+                                sbMemberInfo.Append(city);
+						
+								if(!IsNull(state))
+								{
+                                    sbMemberInfo.Append(",");
+								}
+
+                                sbMemberInfo.Append("&nbsp;");
+							}
+
+							if(!IsNull(state))
+							{
+                                sbMemberInfo.AppendFormat("{0}&nbsp;", state);
+							}
+							if(!IsNull(zip))
+							{
+                                sbMemberInfo.Append(zip);
+							}
+						
+                            sbMemberInfo.Append("<br />");
+						}
+                        if (((IsSiteType("Outdoor") && UserAccess >= 8) || (!IsSiteType("Outdoor") && UserAccess >= 4)) && !IsNull(email))
+                        {
+                            sbMemberInfo.AppendFormat("{0}<br />", email);
+						}
+
+                        memberSearchResult.AriaLabel = Server.HtmlEncode(string.Format("{0} - {1}", memberSearchResult.Name, sbMemberInfo).Replace("<br />", " - ").Replace("&nbsp;", " ").TrimEnd(" -".ToCharArray()));
+
+						if(searchAllSites)
+						{
+                            if (UserAccess >= 4)
+                            {
+                                sbMemberInfo.AppendFormat("Site: <a href='http://{0}/net/member/account.aspx?s={1}.0.0.{2}'>{3}</a><br />",
+                                     reader["SiteDomain"], reader["uid"], reader["SiteID"], reader["SiteTitle"]);
+                            }
+                            else
+                            {
+                                sbMemberInfo.AppendFormat("Site: <a href='http://{0}'>{1}</a><br />",
+                                  reader["SiteDomain"], reader["SiteTitle"]);
+                            }
+                        }
+                        if (GetInt(reader["ItemStatus"]) >= 2)
+                        {
+                            sbMemberInfo.AppendFormat("Status: {0}<br />", StatusText(GetInt(reader["ItemStatus"])));
+                        }
+                        if (UserAccess >= 4 && !IsNull(accesslevel))
+						{
+                            sbMemberInfo.AppendFormat("Site Access: {0}<br />", AccessLevelText(accesslevel));
+							if (orgID > 0 && groupaccesslevel >= 0 && memberStatus >= 0 && memberStatus != 9) 
+							{
+                                sbMemberInfo.AppendFormat("Group Access: {0}<br />", AccessLevelText(groupaccesslevel));
+							}
+						}
+						
+						if(!IsNull(createDate))
+						{
+                            sbMemberInfo.AppendFormat("Activated: {0}<br />", createDate.ToLongDateString());
+						}
+						//if(!IsNull(modifyDate)) // Generates error when null
+						if(!IsNull(reader["modifyDate"]))
+						{
+							DateTime modifyDate = GetDateTime(reader["modifyDate"]);
+                            sbMemberInfo.AppendFormat("Modified: {0}<br />", modifyDate.ToLongDateString());
+						}
+                        sbMemberInfo.Append("<br />");
+                        memberSearchResult.MemberInfo = sbMemberInfo.ToString();
+                        memberSearchResult.CssClass = "memberName";
+
+                        memberSearchResults.Add(memberSearchResult);
+					}
+				}
+                if (memberSearchResults.Count == 1)
+				{
+					MessageLabel.Text = "Select the following or add a new user.<br /><br />";
+                    memberSearchResults.Add(new MemberSearchResult { Name = "Add New User", CssClass = "button" });
+				}
+				else 
+				{
+					MessageLabel.Text = "Select one of the following or add a new user.<br /><br />";
+                    memberSearchResults.Insert(0, new MemberSearchResult { Name = "Add New User", CssClass = "button", MemberInfo = "<br />" }); 
+                    memberSearchResults.Add(new MemberSearchResult { Name = "Add New User", CssClass = "button" }); 
+				}
+				SearchResultsPanel.Visible = true;
+
+                SearchResultsRepeater.DataSource = memberSearchResults;
+                SearchResultsRepeater.DataBind();
+			}
+			else
+			{
+				// No rows found, display the user form and prepopulate the fields.
+                // uid = 0; 9/22/2008 - Don - use value passed in url if any.
+                string tmp = ItemGuid.ToString();	// Initialize ItemGuid
+			
+				UserInfoPanel.Visible = true;
+				if(orgID > 0)
+				{
+					GroupPanel.Visible = true;
+				}
+				RenderInterests();
+				EmailEditPanel.Visible = true;
+				EmailPanel.Visible = false;
+				FirstNameTB.Text = SearchFirstNameTB.Text;
+				LastNameTB.Text = SearchLastNameTB.Text;
+				EmailTB1.Text = SearchEmailTB.Text;
+				EmailLabel.Text = SearchEmailTB.Text;
+                CompanyTB.Text = SearchGroupNameTB.Text;
+				DropDownList phoneTypeDD = (DropDownList)PhonePH.FindControl("PhoneTypeDD1");
+				TextBox areaCodeTB = (TextBox)PhonePH.FindControl("AreaCodeTB1");
+				TextBox phoneTB = (TextBox)PhonePH.FindControl("PhoneTB1");
+				if(!IsNull(phoneTypeDD) && !IsNull(areaCodeTB) && !IsNull(phoneTB))
+				{
+					phoneTypeDD.SelectedValue = this.SearchPhoneTypeDD.SelectedValue;
+					areaCodeTB.Text = SearchAreaCodeTB.Text;
+					phoneTB.Text = SearchPhoneTB.Text;
+				}
+                if (MailingAddressEdit.DisplayCountryDropDown)
+                {
+                    MailingAddressEdit.Country = "United States";
+                }
+                MailingAddressEdit.StateAbbreviation = SiteStateAbbrev;
+                if (ReCaptcha != null && UserAccess == 0)
+                {
+                    CaptchaPanel.Visible = true;
+                }
+				EnableValidators();
+			}
+
+            if (!IsNull(TitleLabel.Text))
+            {
+                MainTitlePanel.Visible = true;
+                MainTitleLabel.Text = TitleLabel.Text; // Display the same title as in the Search Panel
+            }
+
+			reader.Close();
+		}
+
+        protected void SearchResultsRepeater_ItemCommand(object source, RepeaterCommandEventArgs e)
+        {
+            MessageLabel.Text = "";
+            SearchResultsPanel.Visible = false;
+
+            UserInfoPanel.Visible = true;
+
+            if (orgID > 0)
+            {
+                GroupPanel.Visible = true;
+            }
+            if (!IsNull(e.CommandArgument))
+            { // Existing user selected
+                // Value contains comma followed by siteID
+                string[] userinfo = e.CommandArgument.ToString().Split(',');
+                uid = GetInt(userinfo[0]);
+                SelectedSiteID = GetInt(userinfo[1]);
+
+                if (GetRequestString("gosearch").Length > 0)
+                {
+                    Response.Redirect(GetRequestString("gosearch").Replace("[uid]", GetString(uid)));
+                }
+
+                LogonPanel.Visible = false;
+
+                EmailPanel.Visible = false;
+                EmailEditPanel.Visible = true;
+
+                if (UserAccess < 8 && uid != UserID)
+                {
+                    EmailPanel.Visible = true;
+                    EmailEditPanel.Visible = false;
+                }
+
+
+                if (UserAccess < 4 && uid != UserID)
+                {
+                    // To do:
+                    // Change so new user recieves an invite, but is not automatically added.
+                    // Retain as ItemAccess <= 0 to catch when session has timed out.
+
+                    // Can't allow lower levels to view contact info for others by adding them to a group.
+
+                    if (orgID > 0)
+                    {
+                        string listIDUrl = string.Empty;
+                        if (GetRequestInt("listid") > 0)
+                        {
+                            listIDUrl = string.Format("&listid={0}", GetRequestInt("listid"));
+                        }
+
+                        string relationAccess = "5";
+                        if (IsSiteType("Outdoor"))
+                        {
+                            if (PartnerAccess >= 5)
+                            {
+                                relationAccess = "8";
+                            }
+                            else
+                            {
+                                relationAccess = UserAccess > PartnerAccess ? UserAccess.ToString() : PartnerAccess.ToString();
+                            }
+                        }
+
+                        // PartnerID is appended by GetLink
+                        // Passing newsiteid in case a user from another site selected.
+                        Response.Redirect(GetUrl("/net/member/associate.aspx?newsiteid=" + SiteID + "&raccess=" + relationAccess + "&uid=" + uid + listIDUrl + "&gonext=" + Server.UrlEncode(GetUrl("/net/content/contacts.aspx", orgID))));
+                    }
+                    else if (UserAccess == 0)
+                    {
+                        string message = "Please sign in to select an existing account.  You may request a reminder for your password.";
+                        string gologon = "";
+                        if (uid > 0)
+                        {
+                            gologon = RelativeUrl.Replace("[uid]", uid.ToString());
+                        }
+                        Response.Redirect(GetUrl("/net/member/signin.aspx?gologon=" + Server.UrlEncode(gologon) + "&message=" + Server.UrlEncode(message)));
+                        //string message = "You'll need to sign in to select an existing account.";
+                        //Response.Redirect(GetUrl("/net/member/reminder.aspx?gologon=" + Server.UrlEncode(GetUrl("/core/member/f",0)) + "&message=" + Server.UrlEncode(message)));
+                    }
+                    else
+                    {
+                        string message = "You do not have the access level required to associate existing site members to a group.";
+                        Response.Redirect(GetUrl("/core/member/message.aspx?message=" + Server.UrlEncode(message)));
+                    }
+
+                    // BIG BUG - This would allow anyone to logon and then edit the existing account.  Try reactivating this and then lock it down.
+                    //Response.Redirect(GetUrl("/net/member/signin.aspx") + "&gologon=" + Server.UrlEncode(RelativeUrl + "&userid=" + uid));
+                }
+                LoadRelation(orgID, uid);
+                LoadUserInfo(uid);
+            }
+            else // New user being entered
+            {
+                // uid = 0; 9/22/2008 - Don - use value passed in url if any.
+
+                string tmp = ItemGuid.ToString();	// Initialize ItemGuid
+
+                EmailEditPanel.Visible = true;
+                EmailPanel.Visible = false;
+                RenderInterests();
+                FirstNameTB.Text = SearchFirstNameTB.Text;
+                LastNameTB.Text = SearchLastNameTB.Text;
+                EmailTB1.Text = SearchEmailTB.Text;
+                EmailLabel.Text = SearchEmailTB.Text;
+                DropDownList phoneTypeDD = (DropDownList)PhonePH.FindControl("PhoneTypeDD1");
+                TextBox areaCodeTB = (TextBox)PhonePH.FindControl("AreaCodeTB1");
+                TextBox phoneTB = (TextBox)PhonePH.FindControl("PhoneTB1");
+                if (!IsNull(phoneTypeDD) && !IsNull(areaCodeTB) && !IsNull(phoneTB))
+                {
+                    phoneTypeDD.SelectedValue = this.SearchPhoneTypeDD.SelectedValue;
+                    areaCodeTB.Text = SearchAreaCodeTB.Text;
+                    phoneTB.Text = SearchPhoneTB.Text;
+                }
+                if (MailingAddressEdit.DisplayCountryDropDown)
+                {
+                    MailingAddressEdit.Country = "United States";
+                }
+                MailingAddressEdit.StateAbbreviation = SiteStateAbbrev;
+            }
+
+            if (ReCaptcha != null && UserAccess == 0)
+            {
+                CaptchaPanel.Visible = true;
+            }
+
+            EnableValidators();
+        }
+
+		public void RenderTitleLabel()
+		{
+			if (orgID > 0) 
+			{
+				string sql = "SELECT Item.Title, Item.BaseTypeID, Item.TypeID FROM Item WHERE Item.ItemID = " + orgID;
+			
+				SqlDataReader reader = ExecuteReader(sql);
+
+				while(reader.Read())
+				{
+					//groupBaseTypeID = GetInt(reader["basetypeid"]);
+					//groupTypeID = GetInt(reader["typeid"]);
+					GroupTitleLabel.Text = GetString(reader["title"]).Replace("''", "'");
+					
+					GroupPanel.Visible = true;
+				}
+				reader.Close();
+			}
+		}
+		protected void LoadUserInfo(int uid)
+		{
+			if (uid <= 0) return;
+			string sql = string.Empty;
+			int tempFulfillmentUserID = -1;
+
+			sql += "SELECT Item.Title, usr.uid, usr.prefix, usr.fname, usr.mname, usr.lname, usr.suffix, usr.createdate, usr.modifydate, usr.company, usr.jobtitle, usr.EmailPreference, usr.ssn, settings.EmailPreference settingsEmailPreference, usr.PostalMailPreference, ";
+
+			//sql += " SiteMembership.startdate AS SiteStartDate, SiteMembership.stopdate AS SiteEndDate, ";
+			sql += " Site_Item.ItemStartDate AS SiteStartDate, Site_Item.ItemEndDate AS SiteEndDate, Site_Item.ItemStatus AS SiteItemStatus, ";
+			
+			sql += "(SELECT TOP 1 Logon.Access FROM Logon WHERE Logon.ItemID = " + uid + " AND Logon.SiteID = " + SiteID + " ORDER BY Access DESC) AS SiteAccess";
+			if (orgID > 0)
+			{
+                sql += " , Relation.RelationID, Relation.RelationTitle as RelationRelationTitle, Relation.Access AS RelationAccess, Relation.Status AS memberStatus, Relation.ChildID, Relation.RelationTypeID, Relation.PublicContact, Relation.StartDate, Relation.EndDate, Relation.ServiceStartDate, Relation.ServiceEndDate";
+			}
+			if(IsSite("GeorgiaTourism") && orgID == 38121)
+			{
+				sql += ",item.tempfulfillmentuserid";
+			}
+			sql += " FROM Item";
+			
+			sql += " LEFT JOIN Usr ON item.itemid = usr.uid";
+
+            // LEFT JOIN since members from other sites can be associated - since they appear in search all sites results.
+			sql += " LEFT JOIN site_item ON (item.itemid = site_item.itemid";
+			sql += " AND site_item.siteid = " + SiteID + ")";
+
+            // For site-specific email preference
+            sql += " LEFT JOIN Settings ON item.itemid = Settings.Uid AND Settings.SiteID = " + SiteID;
+
+            if (orgID > 0)
+			{
+				sql += " LEFT JOIN Relation ON item.itemid = Relation.ChildID AND Relation.ParentID = " + orgID;
+                if (relationID > 0)
+                {
+                    sql += " AND Relation.RelationID = " + relationID;
+                }
+                else
+                { // Prevent expired Relation dates from appearing in edit fields.
+                    //sql += " AND (Relation.EndDate >= '" + DateTime.Now + "' OR Relation.EndDate IS NULL)";
+                }
+            }
+			sql += " WHERE item.itemid = " + uid.ToString();
+			
+			
+			//if (UserAccess >= 9) WriteHtml("<strong>Admin:</strong> " + sql + "<br />");
+
+			SqlDataReader reader = ExecuteReader(sql);
+
+			if(reader.Read())
+			{
+				uid = GetInt(reader["uid"]);
+				SelectedUserSiteAccess = GetInt(reader["SiteAccess"]);
+				// set the value for NamePrefix / prefix
+                if (NamePrefixDD.Items.FindByValue(GetString(reader["prefix"])) == null)
+				{
+					NamePrefixDD.Items.Add(new ListItem(GetString(reader["prefix"]), GetString(reader["prefix"])));
+				}
+
+				if ((GetString(reader["prefix"])).Length > 0)
+				{
+					NamePrefixDD.SelectedIndex = NamePrefixDD.Items.IndexOf(new ListItem(GetString(reader["prefix"]), GetString(reader["prefix"])));
+				}
+				else
+				{
+					NamePrefixDD.SelectedIndex = NamePrefixDD.Items.IndexOf(new ListItem("", ""));
+				}
+				if (orgID > 0)
+				{
+                    if (!IsNull(reader["ChildID"]))
+                    { // Hide access code when user is already associated to group. 
+                        ActivationCodePanel.Visible = false;
+                        int memberStatus = GetInt(reader["memberStatus"]);
+                        if (UserAccess >= 4 && memberStatus != 8 && memberStatus != 9)
+                        {
+                            // Remove Relation
+                            DisassociateLabel.Text = "&nbsp; &nbsp; <a href='" + GetShortLink("/net/member/remove.aspx?childid=" + reader["ChildID"] + "&parentid=" + ItemID, ItemID) + "'>Remove Relation</a> to " + GroupTitleLabel.Text;
+                        }
+                    }
+                    else
+                    {
+                        DisassociateLabel.Text = "&nbsp; &nbsp; Select a group access below to associate to the group.";
+                        GroupAccessDD.Items.Insert(0, new ListItem("Not in group", "")); // Blank row allows initial Relation insert to be avoided
+				
+                        GroupFieldsPanel.Visible = true;
+                        MemberRolePanel.Visible = true;
+                        MemberRoleTitlePanel.Visible = true;
+                    }
+                    relationID = GetInt(reader["relationID"]);
+                    if (relationID > 0)
+                    {
+                        if (!IsNull(reader["StartDate"])) // Null when adding existing user to group.
+                        {
+                            //MemberStartDateTB.Text = GetDateTime(reader["startdate"]).ToShortDateString();
+                            MemberStartDateTB.Text = GetDateTime(reader["startdate"]).ToString();
+                        }
+                        if (GetInt(reader["SiteItemStatus"]) >= 8) {
+                        	WriteHtml("Account was previously deactivated in the current site.  Saving will reactivate to add to group list.<br>");
+                    	}
+                        if (!IsNull(reader["EndDate"]))
+                        {
+                            if (DateDiff("second", GetDateTime(reader["EndDate"]), DateTime.Now) > 0)
+                            {
+                                MemberDatesMessage.Text += "<span style='color:#b22222;'>Membership has expired.</span><br /><br />";
+                            }
+                            MemberEndDateTB.Text += GetDateTime(reader["enddate"]).ToString();
+                        }
+                        if (GetInt(reader["RelationID"]) > 0 && IsNull(reader["StartDate"]) && IsNull(reader["EndDate"]))
+                        {
+                            MemberDatesMessage.Text += "RelationID " + reader["RelationID"] + " has no start or end dates.<br />";
+                        }
+
+                        if (!IsNull(reader["ServiceStartDate"]) && !IsNull(reader["ServiceEndDate"]))
+                        {
+                            MemberDatesMessage.Text += "Purchased: " + GetDateTime(reader["ServiceStartDate"]).ToShortDateString() + " to " + GetDateTime(reader["ServiceEndDate"]).ToShortDateString() + "<br />";
+                        }
+                        else if (!IsNull(reader["ServiceStartDate"]))
+                        {
+                            MemberDatesMessage.Text += "Purchase start: " + GetDateTime(reader["ServiceStartDate"]).ToShortDateString() + "<br />";
+                        }
+                        else if (!IsNull(reader["ServiceEndDate"]))
+                        {
+                            MemberDatesMessage.Text += "Purchase end: " + GetDateTime(reader["ServiceEndDate"]).ToShortDateString() + "<br />";
+                        }
+                    }
+                    //else
+                    //{
+                    //    if (MemberStartDateTB.Text.Length == 0)
+                    //    {
+                    //        MemberStartDateTB.Text = DateTime.Now.ToString();
+                    //    }
+                    //}
+					
+				}
+                if(LastSSNPanel.Visible)
+                {
+                    LastSSNTB.Text = GetString(reader["ssn"]);
+                }
+				if(JobTitlePanel.Visible == true)
+				{ // orgID is not required to view preexisting
+					if (GetString(reader["company"]).Length > 0) CompanyTB.Text = GetString(reader["company"]);
+                    if (GetString(reader["jobtitle"]).Length > 0) JobTitleTB.Text = GetString(reader["jobtitle"]);
+				}
+
+				if(displayContact == false)
+				{
+					MainTitleLabel.Text = GetString(reader["title"]).Replace("''", "'");
+					MainTitlePanel.Visible = true;
+				}
+
+				FirstNameTB.Text = GetString(reader["fname"]);
+				MiddleNameTB.Text = GetString(reader["mname"]);
+				LastNameTB.Text = GetString(reader["lname"]);
+				//PictureSectionLabel.Text = FirstNameTB.Text + "'s Picture";
+
+				// set the value for NameSuffix / suffix
+                if (NameSuffixDD.Items.FindByValue(GetString(reader["suffix"])) == null)
+				{
+					NameSuffixDD.Items.Add(new ListItem(GetString(reader["suffix"]), GetString(reader["suffix"])));
+				}
+
+				if ((GetString(reader["suffix"])).Length > 0)
+				{
+					NameSuffixDD.SelectedIndex = NameSuffixDD.Items.IndexOf(new ListItem(GetString(reader["suffix"]), GetString(reader["suffix"])));
+				}
+				else
+				{
+					NameSuffixDD.SelectedIndex = NameSuffixDD.Items.IndexOf(new ListItem("", ""));
+				}
+				
+                emailPreference = GetInt(reader["EmailPreference"]);
+                if (GetInt(reader["settingsEmailPreference"]) >= 0)
+                {
+                    emailPreference = GetInt(reader["settingsEmailPreference"]);
+                }
+                postalPreference = GetInt(reader["PostalMailPreference"]);
+				if(IsSite("GeorgiaTourism") && orgID == 38121)
+				{
+					tempFulfillmentUserID = GetInt(reader["tempfulfillmentuserid"]);
+				}
+
+                if (UserAccess >= 8 && UserAccess > GetInt(reader["siteaccess"]) && UserID != uid) SiteAccessPanel.Visible = true;
+
+				if (SiteAccessPanel.Visible == true)
+				{
+                    if (IsNull(reader["siteaccess"]))
+                    {
+                        ErrorLabel.Text += "Click continue to relate individual to website.";
+                    }
+                    else if (SiteAccessDD.Items.FindByValue(GetInt(reader["siteaccess"]).ToString()) != null)
+                    {
+                        SiteAccessDD.SelectedValue = GetInt(reader["siteaccess"]).ToString();
+                    }
+                    else
+                    {
+                        SiteAccessDD.Items.Add(new ListItem(AccessLevelText(GetInt(reader["siteaccess"])) + " (" + reader["siteaccess"] + ")", GetString(reader["siteaccess"])));	
+                        SiteAccessDD.SelectedValue = GetInt(reader["siteaccess"]).ToString();
+                    }
+
+                    //try
+                    //{
+                    //    SiteAccessDD.SelectedValue = GetInt(reader["siteaccess"]).ToString();
+                    //    Write("ABCD " + GetInt(reader["siteaccess"]).ToString());
+                    //}
+                    //catch
+                    //{
+                    //    if (GetInt(reader["siteaccess"]) >= 0)
+                    //    {
+                    //        SiteAccessDD.Items.Add(new ListItem("Undefined: " + GetString(reader["siteaccess"]),GetString(reader["siteaccess"])));
+                    //        SiteAccessDD.SelectedValue = GetString(reader["siteaccess"]);
+                    //    } 
+                    //    else
+                    //    {
+                    //        ErrorLabel.Text += "Click continue to relate individual to website.";
+                    //    }
+                    //}
+
+				}
+                	
+				//if (orgID == SiteID && SiteID != 0 && IsNull(reader["RelationAccess"]))
+
+                if (orgID == SiteID && SiteID != 0 && relationID <= 0)
+				{   //occurs only when group is the site
+					// User does not yet have a Relation record for the Site, fetch from Logon with greatest value.
+
+                    GroupAccessDD.Items.Insert(0, new ListItem("", "")); // Blank row allows initial Relation insert to be avoided
+				
+					try 
+					{
+						GroupAccessDD.SelectedValue = GetInt(reader["siteaccess"]).ToString();
+					} 
+					catch
+					{
+						if (GetInt(reader["siteaccess"]) >= 0)
+						{
+							GroupAccessDD.Items.Add(new ListItem("Undefined: " + GetString(reader["siteaccess"]),GetString(reader["siteaccess"])));
+							GroupAccessDD.SelectedValue = GetString(reader["siteaccess"]);
+						}
+					}
+
+                    MemberDatesMessage.Text += "Account created: " + GetString(reader["SiteStartDate"]) + "<br />";
+                    if (GetString(reader["SiteEndDate"]).Length > 0)
+                    {
+                        MemberDatesMessage.Text += "Account deactivated: " + GetString(reader["SiteEndDate"]) + "<br />";
+                    }
+				}
+				else if(orgID > 0)
+				{
+					int memberAccess = GetInt(reader["RelationAccess"]);
+					int memberStatus = GetInt(reader["memberStatus"]);
+                    if (GetRequestString("publiccontact") != "1")
+                    {
+                        PublicContactCB.Checked = GetBool(reader["PublicContact"]);
+                    }
+                    
+                    if(memberAccess >= 0 && memberStatus >= 0 && memberStatus != 9)
+					{
+                        if(GroupAccessDD.Items.FindByValue(memberAccess.ToString()) == null)
+						{
+                            GroupAccessDD.Items.Add(new ListItem(AccessLevelText(memberAccess) + " (" + memberAccess + ")", memberAccess.ToString()));
+						}
+                        GroupAccessDD.SelectedValue = memberAccess.ToString();
+							
+					}
+
+                    if (memberStatus != 1)
+                    {
+                        DateTime relationEndDate = GetDateTime(reader["EndDate"]);
+                        if (relationEndDate != NullDateTime)
+                        {
+                            RelationStatusLabel.Text = string.Format("Group member status is {0} as of {1}.", StatusText(memberStatus), relationEndDate.ToShortDateString());
+                        }
+                        else
+                        {
+                            RelationStatusLabel.Text = string.Format("Group member status is {0}.", StatusText(memberStatus));
+                        }
+                        RelationStatusLabel.Text += " Group status will be set to Active when saving.";
+                    }
+
+					RelationTitleTB.Text = GetString(reader["RelationRelationTitle"]);
+                    if (RelationTypePanel.Visible)
+                    {
+                        string relationTypeID = GetString(reader["RelationTypeID"]);
+                        if (GetInt(reader["RelationTypeID"]) > 0)
+                        {
+                            if (RelationTypeDD.Items.FindByValue(relationTypeID) == null)
+                            {
+                                RelationTypeDD.Items.Add(new ListItem("TypeID: " + relationTypeID, relationTypeID));
+                            }
+                            RelationTypeDD.SelectedValue = relationTypeID;
+                        }
+                    }
+				}
+				// Existing account, hide the username and password fields.
+				UserNamePasswordPanel.Visible = false;
+			}
+			else 
+			{
+                reader.Close();
+				string message = ("The requested individual was not found within the current website.");
+                Response.Redirect(GetUrl("/core/member/message.aspx?message=" + Server.UrlEncode(message)));
+			}
+
+			reader.Close();
+
+            LoadEmails(uid);
+			LoadPhoneNumbers(uid);
+
+			Item item = new Item();
+            item.es.Connection.Name = ConnectionName;
+            //item.Id = GetInt(uid);
+            item.LoadByPrimaryKey(GetInt(uid));
+
+			if(IsNull(item.MailingAddressID))
+			{
+				// For legacy code - see if there is an address present. If so, then
+				// populate the Item.MailingAddressID with the addressid found.
+				sql = "SELECT TOP 1 Address.AddressID FROM Address WHERE Address.ItemID = " + uid;
+				int addressID = GetInt(ExecuteScalar(sql));
+				if(addressID > 0)
+				{
+					item.MailingAddressID = addressID;
+					item.Save();
+				}
+			}
+
+            if (!IsNull(item.MailingAddressID))
+            {
+                MailingAddressPanel.Visible = true;
+
+                Address mailingAddress = new Address();
+                mailingAddress.es.Connection.Name = ConnectionName;
+                //AddressDO mailingAddress = new AddressDO();
+                //mailingAddress.Id = item.MailingAddressID;
+                try
+                {
+                    mailingAddress.LoadByPrimaryKey(GetInt(item.MailingAddressID));
+                }
+                catch
+                { // Correct for bug in merge.asp page which deletes an Address without clearing Item.MailingAddressID
+                    ExecuteNonQuery("UPDATE Item SET MailingAddressID = null WHERE ItemID = " + uid);
+                }
+
+                if (!IsNull(mailingAddress.AddressLine1))
+                {
+                    MailingAddressEdit.StreetTB.Text = mailingAddress.AddressLine1;
+                }
+                if (!IsNull(mailingAddress.AddressLine2))
+                {
+                    MailingAddressEdit.Street2TB.Text = mailingAddress.AddressLine2;
+                }
+
+                MailingAddressEdit.CityTB.Text = mailingAddress.City;
+                if (!IsNull(mailingAddress.State))
+                {
+                    MailingAddressEdit.StateAbbreviation = mailingAddress.State;
+                }
+
+                if (!IsNull(mailingAddress.Zip))
+                {
+                    MailingAddressEdit.ZipTB.Text = mailingAddress.Zip;
+                }
+
+                if (MailingAddressEdit.DisplayCountyDropDown)
+                {
+                    MailingAddressEdit.CountyID = mailingAddress.CountyID.GetValueOrDefault(NullInt);
+                }
+            }
+            else
+            {
+                MailingAddressEdit.StateAbbreviation = SiteStateAbbrev;
+                if (MailingAddressEdit.DisplayCountryDropDown)
+                {
+                    MailingAddressEdit.Country = "United States";
+                }
+            }
+
+			ThumbTB.Text = item.Thumbnail;
+			ImageTB.Text = item.Image;
+
+			SendWelcomeCB.Checked = false;	// Existing user - no need to send welcome email.
+
+			if (UserAccess >= 9)
+			{
+				NotesTB.Text = item.Notes;
+			}
+			if (UserAccess >= 4 && displayBiography == true)
+			{
+				BiographyPanel.Visible = true;
+                SummaryTB.Text = item.Summary;
+				BiographyTB.Text = item.Body;
+			}
+
+			if(IsSite("GeorgiaTourism") && orgID == 38121)
+			{
+				LoadFulfillmentUserInfo(tempFulfillmentUserID);
+			}
+		}
+
+        protected void LoadEmails(int uid)
+        {
+            string sql = string.Format("SELECT Email.Email FROM Email WHERE Email.ItemID = {0} ORDER BY Email.Priority", uid);
+
+            SqlDataReader reader = ExecuteReader(sql);
+
+            int i = 1;
+            SelectedUserEmails.Clear();
+            while (reader.Read() && i <= 3)
+            {
+                TextBox emailTB = (TextBox)EmailEditPanel.FindControl("EmailTB" + i);
+
+                if (emailTB != null)
+                {
+                    emailTB.Text = GetString(reader["Email"]);
+                    SelectedUserEmails.Add(emailTB.Text.ToLower());
+                    if (i == 1)
+                    {
+                        EmailLabel.Text = EmailTB1.Text;
+                    }
+                }
+                else
+                {
+                    throw new Exception("Cannot find email controls");
+                }
+                i++;
+            }
+            reader.Close();
+        }
+
+		protected void LoadPhoneNumbers(int uid)
+		{
+			string sql = "SELECT TOP " +  NumPhoneFields + " * FROM phone where phone.ItemID = " + uid + "ORDER BY phone.priority";
+			SqlDataReader reader = ExecuteReader(sql);
+			
+			//ExistingPhoneIDs = string.Empty;
+			int i = 1;
+			while(reader.Read())
+			{
+				//ExistingPhoneIDs += GetString(reader["phoneid"]) + ",";
+				DropDownList phoneTypeDD = (DropDownList)PhonePH.FindControl("PhoneTypeDD" + i);
+				TextBox areaCodeTB = (TextBox)PhonePH.FindControl("AreaCodeTB" + i);
+				TextBox phoneTB = (TextBox)PhonePH.FindControl("PhoneTB" + i);
+				TextBox phoneExtTB = (TextBox)PhonePH.FindControl("PhoneExtTB" + i);
+
+				if(!IsNull(phoneTypeDD) && !IsNull(areaCodeTB) && !IsNull(phoneTB) && !IsNull(phoneExtTB))
+				{
+					if(phoneTypeDD.Items.FindByValue(GetString(reader["phonetype"])) == null)
+                    {
+                        continue; // If this is a Home phone for example and home phones are displayed for this site, get the next record
+                    }
+                    phoneTypeDD.SelectedValue = GetString(reader["phonetype"]);
+					areaCodeTB.Text = GetString(reader["areacode"]);
+					phoneTB.Text = GetString(reader["number"]);
+					phoneExtTB.Text = GetString(reader["ext"]);
+
+					string areacode = areaCodeTB.Text;
+					string phone = phoneTB.Text;
+					string ext = phoneExtTB.Text;
+
+					try
+					{
+						PhoneUtil.GetFormattedPhone(ref areacode, ref phone, ref ext);
+						areaCodeTB.Text = areacode;
+						phoneTB.Text = phone;
+						phoneExtTB.Text = ext;
+					}
+					catch
+					{
+						// Can't format the number, just display what is in the database
+						// Catch the error when we try to save.
+					}
+				}
+				else
+				{
+					throw new Exception("Cannot find phone controls");
+				}
+				i++;
+			}
+
+			//ExistingPhoneIDs = ExistingPhoneIDs.Trim(',');
+			reader.Close();
+		}
+
+        protected void LoadVolunteerStatus(int uid)
+        {
+            UsrVolunteer usrVolunteer = new UsrVolunteer();
+            usrVolunteer.es.Connection.Name = ConnectionName;
+
+            if (usrVolunteer.LoadByPrimaryKey(uid))
+            {
+                if (VolunteerStatusDD.Items.FindByValue(usrVolunteer.VolunteerStatus.Value.ToString()) == null)
+                {
+                    VolunteerStatusDD.Items.Add(new ListItem(string.Format("Unknown - ({0})", 
+                        usrVolunteer.VolunteerStatus), usrVolunteer.VolunteerStatus.ToString()));
+                }
+
+                VolunteerStatusDD.SelectedValue = usrVolunteer.VolunteerStatus.Value.ToString();
+
+                // We found a volunteer status record. Remove the "Select..." entry so that
+                // the user will have to choose a status.
+                VolunteerStatusDD.Items.Remove(VolunteerStatusDD.Items.FindByValue(string.Empty));
+
+                if (usrVolunteer.RevocationExpirationDate.HasValue)
+                {
+                    RevocationExpirationDate.SelectedDate = usrVolunteer.RevocationExpirationDate.Value;
+                    RevocationExpirationDate.VisibleDate = RevocationExpirationDate.SelectedDate;
+                }
+
+                RevocationCommentTB.Text = GetString(usrVolunteer.RevocationComment);
+                VolunteerStaffNotesTB.Text = GetString(usrVolunteer.StaffNotes);
+            }
+        }
+
+        protected void SaveVolunteerInfo(int uid)
+        {
+            UsrVolunteer usrVolunteer = new UsrVolunteer();
+            usrVolunteer.es.Connection.Name = ConnectionName;
+
+            if (usrVolunteer.LoadByPrimaryKey(uid) == false)
+            {
+                usrVolunteer.AddNew();
+                usrVolunteer.Uid = uid;
+                usrVolunteer.VolunteerStatus = 1; // Non-null value, assume Valid/Active
+                usrVolunteer.CreateDate = DateTime.Now;
+                usrVolunteer.Creator = UserID;
+            }
+
+            // Save the volunteer status only if a status has been selected.
+            if (GetInt(VolunteerStatusDD.SelectedValue) > 0)
+            {
+                usrVolunteer.VolunteerStatus = GetNullByte(VolunteerStatusDD.SelectedValue);
+                if (usrVolunteer.VolunteerStatus == 1)
+                {
+                    usrVolunteer.RevocationExpirationDate = null;
+                    usrVolunteer.RevocationComment = null;
+                }
+                else
+                {
+                    usrVolunteer.RevocationExpirationDate = GetNullDateTime(RevocationExpirationDate.SelectedDate);
+                    usrVolunteer.RevocationComment = GetNullString(RevocationCommentTB.Text);
+                }
+            }
+
+            usrVolunteer.StaffNotes = GetNullString(VolunteerStaffNotesTB.Text);
+            bool sendStaffNotesNotification = false;
+
+            if (usrVolunteer.es.IsDirty)
+            {
+                if (usrVolunteer.es.ModifiedColumns.Contains("StaffNotes"))
+                {
+                    // Don't send the notification if the notes field is empty.
+                    if (!IsNull(usrVolunteer.StaffNotes))
+                    {
+                        // Make sure we save updates before trying to send notification email
+                        sendStaffNotesNotification = true;
+                    }
+                }
+
+                usrVolunteer.ModifyDate = DateTime.Now;
+                usrVolunteer.Modifier = UserID;
+                usrVolunteer.Save();
+            }
+
+            if (sendStaffNotesNotification)
+            {
+                SendVolunteerStaffNotesNotification(usrVolunteer.StaffNotes);
+            }
+        }
+
+		protected void LoadFulfillmentUserInfo(int fulfillmentUserID)
+		{
+			string sql = "SELECT Relation.access FROM Relation WHERE ParentID = 38121 AND Relation.status != 9 AND ChildID = " + uid.ToString();
+
+			int memberAccess = GetInt(ExecuteScalar(sql));
+						
+			if(memberAccess >= 0)
+			{
+				if(GroupAccessDD.Items.FindByValue(memberAccess.ToString()) != null)
+				{
+					GroupAccessDD.SelectedValue = memberAccess.ToString(); 
+				}
+				else
+				{
+					GroupAccessDD.SelectedIndex = 0;
+				}
+			}
+			else
+			{
+				GroupAccessDD.SelectedIndex = 0;
+			}
+
+            if (fulfillmentUserID >= 0 && !IContains(Host, "localhost"))
+			{
+				SqlConnection conn = new SqlConnection(FulfillmentConnString);
+				conn.Open();
+
+				sql = "select DefaultSourceID from objUser WHERE ID = " + fulfillmentUserID.ToString();
+
+				SqlCommand cmd = new SqlCommand(sql, conn);
+				int defaultSourceID = GetInt(cmd.ExecuteScalar());
+							
+				conn.Close();
+
+				if(defaultSourceID >= 0)
+				{
+					if(DefaultSourceDD.Items.FindByValue(defaultSourceID.ToString()) != null)
+					{
+						DefaultSourceDD.Items.FindByValue(defaultSourceID.ToString()).Selected = true;
+					}
+					else
+					{
+						DefaultSourceDD.SelectedIndex = 0;
+					}
+				}
+				else
+				{
+					DefaultSourceDD.SelectedIndex = 0;
+				}
+			}
+		}
+
+		public void RenderInterests()
+		{
+			if(!displayInterests) return;
+			//if(uid <= 0) return;
+			
+			InterestGroups.Items.Clear();
+			string sql = "";
+			sql = @"SELECT Item.Title, Item.ItemID, Relation.ChildID AS foundID 
+				
+				FROM Item
+				JOIN List ON Item.ItemID = List.ListID
+				LEFT JOIN Relation ON (Item.ItemID = Relation.ParentID AND Relation.ChildID = {0} AND (Relation.Status = 1 OR Relation.Status = 2))
+				WHERE Item.SiteID = {1}
+				AND List.AllowJoins = 1
+				AND List.IsInterestGroup = 1
+				ORDER BY Item.Title";
+
+			sql = string.Format(sql, uid, SelectedSiteID);
+
+			//if (UserAccess >= 9) Write(sql + "<br /><br />");
+		
+			SqlDataReader reader = ExecuteReader(sql);
+			
+			if (reader.HasRows)
+			{
+				InterestPanel.Visible = true;
+				while(reader.Read())
+				{
+					ListItem li = new ListItem();
+					li.Text = reader["Title"].ToString();
+					li.Value = reader["ItemID"].ToString();
+					li.Selected = !(reader["foundId"] == DBNull.Value);
+											
+					InterestGroups.Items.Add(li);
+				}
+			}
+			reader.Close();
+		}
+
+		protected void SaveInterests()
+		{
+			string possibleInterests = "";
+			string sql;
+			int existingStatus;
+			foreach(ListItem item in InterestGroups.Items)
+			{
+				if (possibleInterests.Length > 0)
+				{
+					possibleInterests += "," + item.Value;
+				} 
+				else 
+				{
+					possibleInterests += item.Value;
+				}
+
+				int groupId = GetInt(item.Value);
+				if(groupId < 0) 
+				{
+					throw new Exception("Invalid GroupID.");
+				}
+				if(item.Selected) 
+				{
+					// COPIED FROM INTEREST SAVE ABOVE.
+
+					// Since membership rows may be duplicated for different time spans,
+					// check that an active one does not already exist.
+
+					string query = "SELECT Relation.Status FROM Relation WHERE ChildID = " + uid + " AND ParentID = " + groupId + " AND StartDate <= '" + DateTime.Now + "' ";
+					query += " AND (Relation.EndDate IS NULL OR Relation.EndDate > '" + DateTime.Now + "')";
+					existingStatus = GetInt(ExecuteScalar(query));
+					if (existingStatus < -10000) // Relation row within active date range does not yet exist.
+					{
+						if (existingStatus >= -10) 
+						{
+							//Set the status as needed.
+							//sql = "UPDATE";
+						} 
+						else 
+						{
+							// Status = Assigned(2) to indicate action may be taken if desired by group administrators.
+							// Access = Guest within Group (1) - Nonpaying; Visitor(0) would be for reading onling only, Relation(2) would be someone who attends meetings.  MEMBER_PLUS Relation(3) pays dues.
+							sql = "INSERT INTO Relation (ChildID,ParentID,Status,Access,StartDate,Modifier,ModifyDate,Creator,CreateDate) VALUES ({0},{1},{2},{3},'{4}',{5},'{6}',{7},'{8}')";
+							sql = string.Format(sql,uid,groupId,2,1,DateTime.Now,UserID,DateTime.Now,UserID,DateTime.Now);
+							//try 
+							//{
+							    ExecuteNonQuery(sql);
+
+                                SaveRelationHistory(groupId, uid);
+							//} 
+							//catch 
+							//{
+							//}
+						}
+					} 
+					else if (existingStatus == 8 || existingStatus == 9)
+					{
+						sql = "UPDATE Relation SET Status = 2, Modifier = " + UserID + ", ModifyDate = '" + DateTime.Now + "' WHERE ChildID = " + uid + " AND ParentID = " + groupId;
+						ExecuteNonQuery(sql);
+					}
+				}
+				else 
+				{
+					sql = "UPDATE Relation SET Status = 9, Modifier = " + UserID + ", ModifyDate = '" + DateTime.Now + "' WHERE ChildID = " + uid + " AND ParentID = " + groupId;
+					ExecuteNonQuery(sql);
+				}
+			}
+			if (possibleInterests.Length > 0)
+			{
+				/*
+				sql = "SELECT Relation.ParentID, Email.Email AS ModeratorEmail FROM Relation JOIN Relation Moderator ON Relation.ParentID = Moderator.ParentID AND Moderator.Access >= 8 JOIN Email ON Moderator.ChildID = Email.ItemID AND Email.Priority = 1 WHERE ChildID = " + uid + " AND Relation.ParentID IN (" + possibleInterests + ")";
+				Write(sql);
+				SqlDataReader reader = ExecuteReader(sql);
+				while(reader.Read())
+				{
+					if (UserAccess >= 9)
+					{
+						// TODO: Use a list here to limit to one email per recipient
+						Write("Contact" + reader["ModeratorEmail"] + "<br />");
+					}
+				}
+				reader.Close();
+				*/
+			}
+		}
+
+		private void RequestSelections()
+		{
+			string sql = "SELECT Item.ShortTitle, Item.ItemID FROM Item JOIN Site_Item ON Item.ItemID = Site_Item.ItemID AND Site_Item.SiteID = " + SiteID + " AND Site_Item.ItemStatus = 1 WHERE Item.TypeID = 91999";
+			SqlDataReader reader = ExecuteReader(sql);
+			RequestDD.DataSource = reader;
+			RequestDD.DataValueField = "ItemID";
+			RequestDD.DataTextField = "ShortTitle";
+			RequestDD.DataBind();
+			reader.Close();
+
+			RequestDD.Items.Insert(0,new ListItem("Type of inquiry...", ""));
+			if (IsSite("NewUrbanBuilders")) {
+				RequestPanel.Visible = true;
+			}
+		}
+
+		public Guid ItemGuid // Prevents saving of duplicates when user refreshes, adds image first, or backs up and resubmits.
+		{
+			get
+			{
+				if(IsNull(ViewState["ItemGuid"])) ViewState["ItemGuid"] = System.Guid.NewGuid();
+				return (Guid)ViewState["ItemGuid"];
+			}
+		}
+
+		public string ExistingPhoneIDs
+		{
+			get
+			{
+				if (ViewState["ExistingPhoneIDs"] == null) return "";
+				else return (string)ViewState["ExistingPhoneIDs"];
+			}
+			set
+			{
+				ViewState["ExistingPhoneIDs"] = value;
+			}
+		}
+
+		public int uid
+		{
+			get
+			{
+				if (ViewState["uid"] == null) return -1;
+				else return (int)ViewState["uid"];
+			}
+			set
+			{
+				ViewState["uid"] = value;
+			}
+		}
+		public int SelectedUserSiteAccess
+		{
+			get
+			{
+				if (ViewState["SelectedUserSiteAccess"] == null) return -1;
+				else return (int)ViewState["SelectedUserSiteAccess"];
+			}
+			set
+			{
+				ViewState["SelectedUserSiteAccess"] = value;
+			}
+		}
+
+		protected int relationID
+		{
+			get
+			{
+				if (ViewState["relationID"] == null) return -1;
+				else return (int)ViewState["relationID"];
+			}
+			set
+			{
+				ViewState["relationID"] = value;
+			}
+		}
+        protected int expiredRelationID
+        {
+            get
+            {
+                if (ViewState["expiredRelationID"] == null) return -1;
+                else return (int)ViewState["expiredRelationID"];
+            }
+            set
+            {
+                ViewState["expiredRelationID"] = value;
+            }
+        }
+		public int membershipDatesAccess
+		{
+			get
+			{
+				if (ViewState["MembershipDatesAccess"] == null) return 20; // Limited from all users by default.
+				else return (int)ViewState["MembershipDatesAccess"];
+			}
+			set
+			{
+				ViewState["MembershipDatesAccess"] = value;
+			}
+		}
+		public int SelectedSiteID
+		{
+			get
+			{
+				if (ViewState["SelectedSiteID"] == null) return -1;
+				else return (int)ViewState["SelectedSiteID"];
+			}
+			set
+			{
+				ViewState["SelectedSiteID"] = value;
+			}
+		}
+
+		public string ContactUserEmail
+		{
+			get
+			{
+				if (ViewState["ContactUserEmail"] == null) return "";
+				else return (string)ViewState["ContactUserEmail"];
+			}
+			set
+			{
+				ViewState["ContactUserEmail"] = value;
+			}
+		}
+
+		public List<string> SelectedUserEmails
+		{
+			get
+			{
+                if (ViewState["SelectedUserEmails"] == null)
+                {
+                    ViewState["SelectedUserEmails"] = new List<string>();
+                }
+                return (List<string>)ViewState["SelectedUserEmails"];
+			}
+			set
+			{
+                ViewState["SelectedUserEmails"] = value;
+			}
+		}
+		public string ListActivationCode
+		{
+			get
+			{
+				if (ViewState["ListActivationCode"] == null) return "";
+				else return (string)ViewState["ListActivationCode"];
+			}
+			set
+			{
+				ViewState["ListActivationCode"] = value;
+			}
+		}
+
+}
+
+public class MemberSearchResult
+{
+    public string HiddenValue { get; set; }
+    public string Name { get; set; }
+    public string GroupInfo { get; set; }
+    public string EditUrl { get; set; }
+    public bool ShowEditUrl { get; set; }
+    public string MemberInfo { get; set; }
+    public string CssClass { get; set; }
+    public string AriaLabel { get; set; }
+}
