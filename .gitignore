@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.svn
+.flaskenv
+*.pyc
+*.pyo
+env/
+env*
+dist/
+build/
